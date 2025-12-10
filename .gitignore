@@ -1,0 +1,29 @@
+# == Android Studio / IDE Files ==
+.gradle
+.idea/
+build/
+local.properties
+*.iml
+
+# Keystore files (安全密钥，绝对不能上传)
+*.jks
+*.p12
+
+# Logs, Dumps, and Generated Files
+captures/
+logs/
+*.apk
+*.aab
+
+# == Web / TypeScript / Node Files ==
+# 依赖库文件夹 (体积巨大，不需要上传)
+node_modules/
+
+# 编译生成的文件 (例如 Vite/Webpack 打包产物)
+dist/
+out/
+build/
+
+# IDE/系统文件
+.vscode/
+.DS_Store
