@@ -1,0 +1,7 @@
+{
+  "name": "Copy of ZenLedger AI",
+  "description": "An elegant, Apple-style personal finance tracker powered by Gemini AI for smart transaction parsing. Supports multi-account management and simulated multi-storage configurations.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
