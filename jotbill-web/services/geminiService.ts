@@ -234,6 +234,46 @@ export const parseTransactionImage = async (base64Image: string): Promise<AIPars
   }
 };
 
+/**
+ * Fallback: always use Gemini Vision to parse image (bypass provider setting).
+ * Useful when provider is DeepSeek but device lacks native OCR.
+ */
+export const parseTransactionImageWithGemini = async (
+  base64Image: string,
+  apiKeyOverride?: string
+): Promise<AIParseResult[] | null> => {
+  const config = getAIConfig();
+  const apiKey = apiKeyOverride || config.apiKey;
+  if (!apiKey) throw new Error("Gemini API Key is missing.");
+
+  const ai = new GoogleGenAI({ apiKey });
+  const systemPrompt = "Extract all financial transactions from this image. Return a JSON array. Identify the merchant, date, amount, type (EXPENSE/INCOME), and infer a category. If the text in the image is Chinese, return category/description/merchant in Chinese.";
+  const userContent = {
+    parts: [
+      { inlineData: { mimeType: "image/jpeg", data: base64Image.split(',')[1] } },
+      { text: "Parse this receipt." }
+    ]
+  };
+
+  try {
+    const response = await ai.models.generateContent({
+      model: config.model || 'gemini-1.5-flash',
+      contents: { parts: [{ text: systemPrompt }, ...userContent.parts] },
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: { type: Type.ARRAY, items: parseSchema },
+      }
+    });
+    const jsonText = response.text || null;
+    if (!jsonText) return null;
+    const cleanJson = jsonText.replace(/```json/g, '').replace(/```/g, '').trim();
+    return JSON.parse(cleanJson) as AIParseResult[];
+  } catch (error) {
+    console.error("Gemini Vision fallback error:", error);
+    throw error;
+  }
+};
+
 export const generateFinancialReport = async (prompt: string, language: 'en' | 'zh'): Promise<string | null> => {
   const englishSystemInstruction = `
   **Role:** You are "Pocket Ledger AI", a warm, empathic, and data-driven financial coach.

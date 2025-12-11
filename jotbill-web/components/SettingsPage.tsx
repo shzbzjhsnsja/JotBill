@@ -4,7 +4,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { ArrowLeft, Check, Server, HardDrive, Cloud, ChevronRight, LogOut, Download, Upload, Image as ImageIcon, ScanLine, FileText, Trash2, AlertTriangle, LayoutTemplate, Cpu, Key, Globe, Eye, EyeOff, Zap, RefreshCw, XCircle, CheckCircle2, Link, Save, RotateCw, CloudDownload, Wifi } from 'lucide-react';
 import { UserProfile, StorageConfig, AIParseResult, TransactionType, UIPreferences, Category, AIConfig, AIProvider } from '../types';
 import { I18N, INITIAL_STORAGE, DEFAULT_AI_CONFIG } from '../constants';
-import { parseTransactionImage, parseTransactionText, testAIConnection } from '../services/geminiService';
+import { parseTransactionImage, parseTransactionImageWithGemini, parseTransactionText, testAIConnection } from '../services/geminiService';
 import { testWebDAVConnection, uploadToWebDAV, restoreFromWebDAV } from '../services/WebDAVService';
 import * as db from '../services/db';
 
@@ -362,11 +362,11 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, user, onUpdateUser,
       }
   };
 
-  // Native OCR bridge (Android only). Falls back to reject if不可用。
+  // Native OCR bridge (Android/Harmony). Falls back to reject if不可用。
   const callNativeOcr = (dataUrl: string): Promise<string> => {
       return new Promise((resolve, reject) => {
           // @ts-ignore
-          const bridge = (window as any).AndroidOCR;
+          const bridge = (window as any).AndroidOCR || (window as any).HarmonyOCR;
           if (!bridge || typeof bridge.ocrBase64 !== 'function') {
               reject(new Error('Native OCR not available'));
               return;
@@ -411,8 +411,8 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, user, onUpdateUser,
               if (reader.result) {
                   const dataUrl = reader.result as string;
 
-                  // DeepSeek 走本地 OCR -> 文本解析，避免多模态 400
-                  if (aiConfig.provider === 'DEEPSEEK' && (window as any).AndroidOCR) {
+                  // DeepSeek 走本地 OCR -> 文本解析，避免多模态 400（支持 Android/Harmony 提供的 native OCR）
+                  if (aiConfig.provider === 'DEEPSEEK' && ((window as any).AndroidOCR || (window as any).HarmonyOCR)) {
                       try {
                           const text = await callNativeOcr(dataUrl);
                           const parsed = await parseTransactionText(text, user.language);
@@ -431,7 +431,26 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, user, onUpdateUser,
                       return;
                   }
 
-                  // 其他 provider 走原有多模态
+                  // DeepSeek 且无原生 OCR：改用 Gemini Vision 兜底解析整图（需 Gemini Key）
+                  if (aiConfig.provider === 'DEEPSEEK') {
+                      try {
+                          const results = await parseTransactionImageWithGemini(dataUrl);
+                          if (results && results.length > 0) {
+                              onBatchAddTransactions(results);
+                              alert(`${t.success}: ${results.length} ${t.importedCount}`);
+                          } else {
+                              throw new Error('Gemini 解析返回空结果');
+                          }
+                      } catch (err: any) {
+                          showToast(err?.message || '当前环境未提供原生 OCR，请在设置切换为 Gemini 解析，或使用 CSV 导入。', 'error');
+                      } finally {
+                          setIsScreenshotLoading(false);
+                          setScreenshotStatus('');
+                      }
+                      return;
+                  }
+
+                  // 非 DeepSeek 或已支持多模态的 provider 走原有多模态
                   const results = await parseTransactionImage(dataUrl);
                   if (results && results.length > 0) {
                       onBatchAddTransactions(results);
@@ -987,21 +1006,21 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, user, onUpdateUser,
                          <label className="text-xs font-bold text-gray-400 uppercase flex items-center gap-2 mb-2">
                              <Key size={14}/> {t.apiKey}
                          </label>
-                         <div className="relative">
-                             <input 
-                               type={showApiKey ? "text" : "password"}
-                               value={aiConfig.apiKey}
-                               onChange={(e) => setAiConfig({...aiConfig, apiKey: e.target.value})}
-                               placeholder={t.apiKeyPlaceholder}
-                               className="w-full p-3 pr-12 bg-gray-50 rounded-xl font-bold outline-none text-sm transition-all focus:bg-white focus:ring-2 focus:ring-black/5"
-                             />
-                             <button 
-                               onClick={() => setShowApiKey(!showApiKey)}
-                               className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 p-1"
-                             >
-                                 {showApiKey ? <EyeOff size={18} /> : <Eye size={18} />}
-                             </button>
-                         </div>
+                        <div className="relative">
+                            <input 
+                              type="text" // plain text to allow copy/paste on Huawei keyboard
+                              value={aiConfig.apiKey}
+                              onChange={(e) => setAiConfig({...aiConfig, apiKey: e.target.value})}
+                              placeholder={t.apiKeyPlaceholder}
+                              className="w-full p-3 pr-12 bg-gray-50 rounded-xl font-bold outline-none text-sm transition-all focus:bg-white focus:ring-2 focus:ring-black/5"
+                            />
+                            <button 
+                              onClick={() => setShowApiKey(!showApiKey)}
+                              className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 p-1"
+                            >
+                                {showApiKey ? <EyeOff size={18} /> : <Eye size={18} />}
+                            </button>
+                        </div>
                      </div>
 
                      {/* Base URL (Hidden for Gemini) */}
