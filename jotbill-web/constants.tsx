@@ -387,7 +387,7 @@ export const I18N = {
     overwrite: '覆盖现有数据',
     merge: '合并到现有数据',
     customizeNav: '自定义底部导航栏',
-    aiAdvisor: 'AI 温暖财务顾问',
+    aiAdvisor: 'AI 财务顾问',
     monthlyAnalysis: '月度财务分析',
     thinking: '思考中...',
     kuruKuru: '正在扫描你的钱包... 发现可疑消费...',
@@ -695,11 +695,7 @@ export const INITIAL_LEDGERS: Ledger[] = [
   { id: 'l2', name: '旅行日记', currency: 'USD', color: 'bg-green-500', icon: '✈️' },
 ];
 
-export const INITIAL_ACCOUNTS: Account[] = [
-  { id: '1', ledgerId: 'l1', name: '招商银行', type: 'CHECKING', balance: 24500.00, currency: 'CNY', icon: 'credit-card' },
-  { id: '2', ledgerId: 'l1', name: '微信钱包', type: 'WECHAT', balance: 1250.50, currency: 'CNY', icon: 'wallet' },
-  { id: '3', ledgerId: 'l2', name: 'VISA Card', type: 'CREDIT_CARD', balance: -450.00, creditLimit: 5000, statementDay: 1, paymentDueDay: 20, currency: 'USD', icon: 'credit-card' },
-];
+export const INITIAL_ACCOUNTS: Account[] = [];
 
 export const INITIAL_CATEGORIES: Category[] = [
   { 

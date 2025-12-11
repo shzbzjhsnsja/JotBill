@@ -320,10 +320,23 @@ const Reports: React.FC<ReportsProps> = ({ transactions, user, categories, curre
 
       {/* AI Report Modal */}
       {isReportModalOpen && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+          <div
+            className="fixed inset-0 z-[100] flex items-center justify-center px-4"
+            style={{
+              paddingTop: 'calc(env(safe-area-inset-top, 24px) + 16px)',
+              paddingBottom: 'calc(env(safe-area-inset-bottom, 24px) + 16px)',
+            }}
+          >
               <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => !isGenerating && setIsReportModalOpen(false)}></div>
               
-              <div className="bg-white w-full max-w-2xl rounded-[2.5rem] shadow-2xl relative z-10 overflow-hidden flex flex-col max-h-[90vh] animate-scale-in">
+              <div
+                className="bg-white w-full max-w-xl rounded-[2.5rem] shadow-2xl relative z-10 overflow-hidden flex flex-col animate-scale-in"
+                style={{
+                  height: 'min(68vh, calc(100vh - env(safe-area-inset-top, 24px) - env(safe-area-inset-bottom, 24px) - 120px))',
+                  maxHeight: 'min(68vh, calc(100vh - env(safe-area-inset-top, 24px) - env(safe-area-inset-bottom, 24px) - 120px))',
+                  minHeight: '60vh',
+                }}
+              >
                   
                   {/* Header */}
                   <div className="px-8 py-6 bg-gradient-to-r from-indigo-50 to-purple-50 flex justify-between items-center border-b border-gray-100">
@@ -345,7 +358,7 @@ const Reports: React.FC<ReportsProps> = ({ transactions, user, categories, curre
                   </div>
 
                   {/* Body */}
-                  <div className="flex-1 overflow-y-auto p-8 pr-10 pb-10 bg-white min-h-[300px]">
+                  <div className="flex-1 overflow-y-auto p-8 pr-10 pb-10 bg-white min-h-0">
                       {isGenerating ? (
                           <div className="flex flex-col items-center justify-center h-full py-10 space-y-8">
                               {/* Herta-style Kuru Kuru Animation */}

@@ -1,6 +1,4 @@
-﻿
-
-import React, { useState, useEffect, useRef } from 'react';
+﻿import React, { useState, useEffect, useRef } from 'react';
 import { ArrowLeft, Check, Server, HardDrive, Cloud, ChevronRight, LogOut, Download, Upload, Image as ImageIcon, ScanLine, FileText, Trash2, AlertTriangle, LayoutTemplate, Cpu, Key, Globe, Eye, EyeOff, Zap, RefreshCw, XCircle, CheckCircle2, Link, Save, RotateCw, CloudDownload, Wifi } from 'lucide-react';
 import { UserProfile, StorageConfig, AIParseResult, TransactionType, UIPreferences, Category, AIConfig, AIProvider } from '../types';
 import { I18N, INITIAL_STORAGE, DEFAULT_AI_CONFIG } from '../constants';
@@ -15,7 +13,7 @@ interface SettingsPageProps {
   onImportData: (data: any) => void;
   onBatchAddTransactions?: (txs: any[]) => void;
   fullData: any;
-  onAppReset?: () => void; 
+  onAppReset?: () => void;
   uiPrefs: UIPreferences;
   onUpdateUiPrefs: (prefs: UIPreferences) => void;
 }
@@ -49,7 +47,7 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, user, onUpdateUser,
 
   // Import Refs & State
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const importInputRef = useRef<HTMLInputElement>(null); 
+  const importInputRef = useRef<HTMLInputElement>(null);
   const screenshotInputRef = useRef<HTMLInputElement>(null);
   const csvInputRef = useRef<HTMLInputElement>(null);
   const ocrCallbacks = useRef<Map<string, { resolve: (text: string) => void, reject: (err: any) => void }>>(new Map());
@@ -268,6 +266,7 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, user, onUpdateUser,
       setIsCustomModel(false); // Reset to preset mode
   };
 
+  // ✅ 改动：handleExport 适配鸿蒙 saveFile 接口
   const handleExport = async () => {
     try {
         const backupData = await db.getBackupData();
@@ -276,7 +275,15 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, user, onUpdateUser,
         const dateStr = new Date().toISOString().split('T')[0];
         const fileName = `PocketLedger_Backup_${dateStr}.json`;
 
-        // ANDROID HYBRID BRIDGE:
+        // 🟢 鸿蒙原生导出 (优先)
+        // @ts-ignore
+        if (window.JotBillOCR && window.JotBillOCR.saveFile) {
+             // @ts-ignore
+             window.JotBillOCR.saveFile(fileName, jsonString);
+             return;
+        }
+
+        // 🟢 安卓原生导出
         // @ts-ignore
         if (typeof window.Android !== 'undefined' && window.Android.saveFile) {
             // @ts-ignore
@@ -284,7 +291,7 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, user, onUpdateUser,
             return;
         }
 
-        // WEB FALLBACK:
+        // WEB Fallback (PC浏览器)
         const blob = new Blob([jsonString], { type: "application/json" });
         const url = URL.createObjectURL(blob);
         const link = document.createElement('a');
@@ -362,11 +369,12 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, user, onUpdateUser,
       }
   };
 
-  // Native OCR bridge (Android/Harmony). Falls back to reject if不可用。
+  // Native OCR bridge (Android/Harmony).
   const callNativeOcr = (dataUrl: string): Promise<string> => {
       return new Promise((resolve, reject) => {
           // @ts-ignore
-          const bridge = (window as any).AndroidOCR || (window as any).HarmonyOCR;
+          // 统一桥接对象检查
+          const bridge = (window as any).JotBillOCR || (window as any).HarmonyOCR || (window as any).AndroidOCR;
           if (!bridge || typeof bridge.ocrBase64 !== 'function') {
               reject(new Error('Native OCR not available'));
               return;
@@ -374,7 +382,6 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, user, onUpdateUser,
           const cbId = `ocr_${Date.now()}`;
           ocrCallbacks.current.set(cbId, { resolve, reject });
 
-          // 注册全局回调（单入口，根据 id 分发）
           // @ts-ignore
           (window as any).__OCR_CB = (id: string, payload: { ok: boolean; text?: string; error?: string }) => {
               const entry = ocrCallbacks.current.get(id);
@@ -391,7 +398,6 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, user, onUpdateUser,
               reject(err);
           }
 
-          // 超时兜底
           setTimeout(() => {
               if (ocrCallbacks.current.has(cbId)) {
                   ocrCallbacks.current.delete(cbId);
@@ -400,6 +406,69 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, user, onUpdateUser,
           }, 15000);
       });
   };
+
+  // ✅ 改动：鸿蒙 OCR 结果接收器 - 自动调用 DeepSeek 流程
+  useEffect(() => {
+    const receiver = async (jsonString: string) => {
+      console.log('[JotBillOCR] Received from native:', jsonString);
+      
+      // 1. 处理取消或错误
+      if (jsonString === 'CANCEL') {
+          setIsScreenshotLoading(false);
+          setScreenshotStatus('');
+          return;
+      }
+      if (jsonString === 'ERROR') {
+          showToast('原生识别出错', 'error');
+          setIsScreenshotLoading(false);
+          setScreenshotStatus('');
+          return;
+      }
+
+      try {
+        let rawText = '';
+        try {
+            rawText = JSON.parse(jsonString); // 鸿蒙 Index.ets 使用了 JSON.stringify
+        } catch {
+            rawText = jsonString;
+        }
+
+        if (!rawText || rawText === '未识别到有效文字' || rawText.length === 0) {
+            showToast('图片中未识别到文字，请重试', 'error');
+            setIsScreenshotLoading(false);
+            setScreenshotStatus('');
+            return;
+        }
+
+        // 2. OCR 成功，转交 AI
+        setScreenshotStatus('AI Analyzing...');
+        
+        // 3. 核心逻辑：调用 AI (DeepSeek/Gemini) 解析文本
+        const parsed = await parseTransactionText(rawText, user.language);
+        
+        if (parsed && onBatchAddTransactions) {
+            onBatchAddTransactions([parsed]);
+            showToast(`${t.success}: 1 ${t.importedCount}`, 'success');
+        } else {
+            showToast(t.noValidTxs, 'error');
+        }
+
+      } catch (err: any) {
+        console.error('[JotBillOCR] AI Process error:', err);
+        showToast('AI 解析失败: ' + (err.message || 'Unknown error'), 'error');
+      } finally {
+        setIsScreenshotLoading(false);
+        setScreenshotStatus('');
+      }
+    };
+
+    // 挂载到全局
+    (window as any).receiveOCRResult = receiver;
+    
+    return () => {
+      delete (window as any).receiveOCRResult;
+    };
+  }, [onBatchAddTransactions, user.language, t]); 
 
   const handleScreenshotImport = (e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0];
@@ -411,8 +480,8 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, user, onUpdateUser,
               if (reader.result) {
                   const dataUrl = reader.result as string;
 
-                  // DeepSeek 走本地 OCR -> 文本解析，避免多模态 400（支持 Android/Harmony 提供的 native OCR）
-                  if (aiConfig.provider === 'DEEPSEEK' && ((window as any).AndroidOCR || (window as any).HarmonyOCR)) {
+                  // DeepSeek 走本地 OCR -> 文本解析
+                  if (aiConfig.provider === 'DEEPSEEK' && ((window as any).AndroidOCR || (window as any).HarmonyOCR || (window as any).JotBillOCR)) {
                       try {
                           const text = await callNativeOcr(dataUrl);
                           const parsed = await parseTransactionText(text, user.language);
@@ -431,7 +500,7 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, user, onUpdateUser,
                       return;
                   }
 
-                  // DeepSeek 且无原生 OCR：改用 Gemini Vision 兜底解析整图（需 Gemini Key）
+                  // DeepSeek 且无原生 OCR fallback
                   if (aiConfig.provider === 'DEEPSEEK') {
                       try {
                           const results = await parseTransactionImageWithGemini(dataUrl);
@@ -450,7 +519,7 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, user, onUpdateUser,
                       return;
                   }
 
-                  // 非 DeepSeek 或已支持多模态的 provider 走原有多模态
+                  // 其他多模态模型
                   const results = await parseTransactionImage(dataUrl);
                   if (results && results.length > 0) {
                       onBatchAddTransactions(results);
@@ -464,6 +533,7 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, user, onUpdateUser,
       }
   };
   
+  // 保留了完整的 CSV 解析逻辑
   const handleCsvFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0];
       if (!file || !onBatchAddTransactions) return;
@@ -475,18 +545,15 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, user, onUpdateUser,
         const clean = raw.replace(/^\uFEFF/, '');
         const lines = clean.split(/\r?\n/);
         const parsedTxs: any[] = [];
-        const seenIds = new Set<string>(); // 去重：同一交易单号不重复导入
+        const seenIds = new Set<string>(); 
         let startIdx = -1;
-        let delimiter = ','; // default, but detect header delimiter
+        let delimiter = ','; 
 
-        // Detect Header (UTF-8 or possible mojibake)
+        // Detect Header 
         lines.forEach((line, idx) => {
             const l = line.trim();
-            if (l.startsWith('#')) return; // skip comment lines / notes
-            // 微信/支付宝常见列名
-            if (
-              l.includes('交易时间') || l.includes('交易创建时间') || l.toLowerCase().includes('trade time')
-            ) {
+            if (l.startsWith('#')) return; 
+            if (l.includes('交易时间') || l.includes('交易创建时间') || l.toLowerCase().includes('trade time')) {
                 startIdx = idx + 1;
                 if (l.includes('\t')) delimiter = '\t';
                 else if (l.includes(';')) delimiter = ';';
@@ -497,19 +564,16 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, user, onUpdateUser,
             for (let i = startIdx; i < lines.length; i++) {
                 const line = lines[i].trim();
                 if (!line) continue;
-                if (line.startsWith('#')) continue; // skip notes rows like "###"
+                if (line.startsWith('#')) continue; 
                 const cols = line.split(delimiter).map(s => s.replace(/^\"|\"$/g, '').trim());
                 if (cols.length < 5) continue;
 
                 try {
-                    // 日期与时间提取（保留时间用于显示）
                     const rawDate = (cols[0] || '').trim();
                     let dateKey = '';
                     let timePart = '';
                     const parts = rawDate.split(/\s+/);
-                    if (parts.length >= 2) {
-                        timePart = parts.slice(1).join(' ');
-                    }
+                    if (parts.length >= 2) timePart = parts.slice(1).join(' ');
                     const baseForDate = parts[0] ? parts[0] : new Date().toISOString().split('T')[0];
                     const parsedDate = new Date(`${baseForDate}T${timePart || '00:00:00'}`);
                     const safeDate = !isNaN(parsedDate.getTime()) ? parsedDate : new Date();
@@ -524,7 +588,6 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, user, onUpdateUser,
                     let txId = '';
 
                     if (importSource === 'WECHAT') {
-                        // 微信列序：0交易时间 1交易类型 2交易对方 3商品 4收/支 5金额 6支付方式 7当前状态 8交易单号
                         merchant = cols[2];
                         desc = cols[3];
                         const rawTypeField = (cols[4] || '').trim();
@@ -536,19 +599,14 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, user, onUpdateUser,
                         const rawStatusClean = status.replace(/\s/g, '');
                         txId = cols[8] || cols[7] || cols[3] || '';
 
-                        // 不计收支/零钱提现：记为支出（微信扣款）
                         if (rawTypeClean.includes('不计收支') || rawStatusClean.includes('不计收支') || rawTypeClean.includes('零钱提现')) {
                             typeStr = '支出';
                         }
-
                         const nType = rawTypeClean.toLowerCase();
                         const nStatus = rawStatusClean.toLowerCase();
                         isRefund = nType.includes('退款') || nStatus.includes('退款') || nType.includes('refund');
-                        if (isRefund) {
-                            typeStr = '收入';
-                        }
+                        if (isRefund) typeStr = '收入';
                     } else { // ALIPAY
-                        // 支付宝列序：0交易时间 1交易分类 2交易对方 3对方账号 4商品说明 5收/付款 6金额 7收/付账户 8交易状态 9交易订单号 10商家订单号 11备注
                         merchant = cols[2] || cols[3] || '';
                         desc = cols[4] || '';
                         const rawTypeField = (cols[5] || '').trim();
@@ -561,25 +619,15 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, user, onUpdateUser,
                         const rawStatusClean = status.replace(/\s/g, '');
                         txId = cols[9] || cols[10] || cols[3] || '';
 
-                        // 不计收支/零钱提现：记为支出（余额被转出）
                         if (rawTypeClean.includes('不计收支') || rawStatusClean.includes('不计收支') || rawTypeClean.includes('零钱提现')) {
                             typeStr = '支出';
                         }
-
-                        // 类型判定：退款/收入/支出/金额符号兜底
                         const nType = rawTypeClean.toLowerCase();
                         const nStatus = rawStatusClean.toLowerCase();
                         isRefund = nType.includes('退款') || nStatus.includes('退款') || nType.includes('refund');
-                        if (isRefund) {
-                            typeStr = '收入';
-                        }
-                        // 账户判定
-                        if (payAccount.includes('花呗')) {
-                            accountName = '花呗';
-                        } else if (payAccount.includes('余额宝')) {
-                            accountName = '余额宝';
-                        }
-                        // 兜底账户
+                        if (isRefund) typeStr = '收入';
+                        if (payAccount.includes('花呗')) accountName = '花呗';
+                        else if (payAccount.includes('余额宝')) accountName = '余额宝';
                         if (!accountName) accountName = '支付宝';
                     }
 
@@ -595,18 +643,11 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, user, onUpdateUser,
                         else if (amount < 0) type = TransactionType.EXPENSE;
                         else continue;
                     }
-
-                    // 确保金额为正，符号通过 type 表达
                     const absAmount = Math.abs(amount);
-
-                    // 退款默认用“退款”分类，其他按描述/商户；描述或商户含“退款”也认定为退款
                     if (!isRefund) {
                         const combined = `${desc}${merchant}${typeStr}`.toLowerCase();
-                        if (combined.includes('退款') || combined.includes('refund')) {
-                            isRefund = true;
-                        }
+                        if (combined.includes('退款') || combined.includes('refund')) isRefund = true;
                     }
-                    // 简单关键词分类：交通/出行识别为“交通”，日用百货/购物识别为“购物”，其余走原逻辑
                     let categoryValue = desc || merchant;
                     if (isRefund) {
                         categoryValue = '退款';
@@ -618,11 +659,8 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, user, onUpdateUser,
                         else if (isShopping) categoryValue = '购物';
                     }
 
-                    // 去重：同一交易单号只保留一条
                     if (txId) {
-                        if (seenIds.has(txId)) {
-                            continue;
-                        }
+                        if (seenIds.has(txId)) continue;
                         seenIds.add(txId);
                     }
 
@@ -636,9 +674,7 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, user, onUpdateUser,
                         category: categoryValue,
                         accountName: importSource === 'WECHAT' ? '微信' : (accountName || '支付宝')
                     });
-                } catch (err) {
-                    // ignore row
-                }
+                } catch (err) {}
             }
         }
         return parsedTxs;
@@ -730,7 +766,7 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, user, onUpdateUser,
          <>
           <Header title={t.settings} backFn={onBack} />
           <div className="flex-1 overflow-y-auto p-4 space-y-6">
-             
+              
              {/* Profile Card (Top Priority) */}
              <div 
                onClick={() => setView('PROFILE')}
@@ -844,7 +880,7 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, user, onUpdateUser,
              </div>
 
              <div className="text-center pt-8 pb-4">
-                 <p className="text-xs text-gray-400 font-bold">ZenLedger AI v6.2</p>
+                 <p className="text-xs text-gray-400 font-bold">小计一笔</p>
              </div>
           </div>
          </>
@@ -1095,20 +1131,20 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, user, onUpdateUser,
                          onClick={handleTestConnection}
                          disabled={isTesting}
                          style={{
-                            flex: 1,
-                            height: '48px',
-                            background: '#f5f5f5',
-                            color: '#333',
-                            border: '1px solid #ddd',
-                            borderRadius: '12px',
-                            fontWeight: 600,
-                            fontSize: '15px',
-                            whiteSpace: 'nowrap',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            opacity: isTesting ? 0.6 : 1,
-                            cursor: isTesting ? 'not-allowed' : 'pointer'
+                           flex: 1,
+                           height: '48px',
+                           background: '#f5f5f5',
+                           color: '#333',
+                           border: '1px solid #ddd',
+                           borderRadius: '12px',
+                           fontWeight: 600,
+                           fontSize: '15px',
+                           whiteSpace: 'nowrap',
+                           display: 'flex',
+                           alignItems: 'center',
+                           justifyContent: 'center',
+                           opacity: isTesting ? 0.6 : 1,
+                           cursor: isTesting ? 'not-allowed' : 'pointer'
                          }}
                      >
                          {isTesting ? (
@@ -1122,19 +1158,19 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, user, onUpdateUser,
                      <button 
                          onClick={handleSaveAndExit}
                          style={{
-                            flex: 2,
-                            height: '48px',
-                            background: '#000',
-                            color: '#fff',
-                            border: 'none',
-                            borderRadius: '12px',
-                            fontWeight: 600,
-                            fontSize: '15px',
-                            whiteSpace: 'nowrap',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            cursor: 'pointer'
+                           flex: 2,
+                           height: '48px',
+                           background: '#000',
+                           color: '#fff',
+                           border: 'none',
+                           borderRadius: '12px',
+                           fontWeight: 600,
+                           fontSize: '15px',
+                           whiteSpace: 'nowrap',
+                           display: 'flex',
+                           alignItems: 'center',
+                           justifyContent: 'center',
+                           cursor: 'pointer'
                          }}
                      >
                          <Check size={18} className="mr-1.5"/> 
@@ -1232,7 +1268,18 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, user, onUpdateUser,
                           </div>
                       </div>
                       <button 
-                        onClick={() => screenshotInputRef.current?.click()}
+                        onClick={() => {
+                          const bridge = (window as any).JotBillOCR;
+                          if (bridge && typeof bridge.triggerOCR === 'function') {
+                            // ✅ [关键修改 2] 点击按钮时，立即开启加载状态
+                            setIsScreenshotLoading(true);
+                            setScreenshotStatus(t.analyzing);
+                            
+                            bridge.triggerOCR();
+                          } else {
+                            screenshotInputRef.current?.click();
+                          }
+                        }}
                         className="w-full py-3 bg-blue-600 text-white rounded-xl font-bold shadow-lg hover:bg-blue-700 transition-colors flex items-center justify-center gap-2"
                         disabled={isScreenshotLoading}
                       >
