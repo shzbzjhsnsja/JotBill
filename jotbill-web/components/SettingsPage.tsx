@@ -514,7 +514,7 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, user, onUpdateUser,
                     <button onClick={handleResetClick} className="w-full p-4 flex items-center gap-3 text-red-500 hover:bg-red-50 transition-colors"><Trash2 size={20} /><span className="font-bold">{t.resetData}</span></button>
                 </div>
              </div>
-             <div className="text-center pt-8 pb-4"><p className="text-xs text-gray-400 font-bold">ZenLedger AI v6.2</p></div>
+             <div className="text-center pt-8 pb-4"><p className="text-xs text-gray-400 font-bold">小计一笔</p></div>
           </div>
          </>
       )}
