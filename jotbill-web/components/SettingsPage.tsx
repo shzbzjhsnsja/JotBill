@@ -6,6 +6,21 @@ import { parseTransactionImage, parseTransactionImageWithGemini, parseTransactio
 import { testWebDAVConnection, uploadToWebDAV, restoreFromWebDAV } from '../services/WebDAVService';
 import * as db from '../services/db';
 
+// ========================================================
+// 🟢 全局返回键逻辑 (原生调用)
+// ========================================================
+(window as any).dispatchBackKey = () => {
+  if (typeof (window as any).__SETTINGS_BACK__ === 'function') {
+    const result = (window as any).__SETTINGS_BACK__();
+    if (result === "handled") return; 
+  }
+  // @ts-ignore
+  if (window.JotBillOCR && window.JotBillOCR.exitApp) {
+    // @ts-ignore
+    window.JotBillOCR.exitApp();
+  }
+};
+
 interface SettingsPageProps {
   onBack: () => void;
   user: UserProfile;
@@ -31,41 +46,34 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, user, onUpdateUser,
   const [aiConfig, setAiConfig] = useState<AIConfig>(DEFAULT_AI_CONFIG);
   const [showApiKey, setShowApiKey] = useState(false);
   
-  // AI Config UI State
   const [isTesting, setIsTesting] = useState(false);
   const [isCustomModel, setIsCustomModel] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'loading' } | null>(null);
 
-  // WebDAV State
   const [showDavPassword, setShowDavPassword] = useState(false);
   const [davLoading, setDavLoading] = useState<'TEST' | 'BACKUP' | 'RESTORE' | null>(null);
 
-  // Environment Detection
   // @ts-ignore
   const isAndroid = typeof window.Android !== 'undefined';
-  const isWeb = !isAndroid;
+  // @ts-ignore
+  const isHarmony = typeof window.JotBillOCR !== 'undefined';
+  const isWeb = !isAndroid && !isHarmony;
 
-  // Import Refs & State
   const fileInputRef = useRef<HTMLInputElement>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
   const screenshotInputRef = useRef<HTMLInputElement>(null);
   const csvInputRef = useRef<HTMLInputElement>(null);
   const ocrCallbacks = useRef<Map<string, { resolve: (text: string) => void, reject: (err: any) => void }>>(new Map());
   
-  // UI: Import Source Selection State
   const [importSource, setImportSource] = useState<'WECHAT' | 'ALIPAY'>('WECHAT');
-
-  // Status for Smart Import
   const [isScreenshotLoading, setIsScreenshotLoading] = useState(false);
   const [screenshotStatus, setScreenshotStatus] = useState('');
   const [isCsvLoading, setIsCsvLoading] = useState(false);
   const [csvStatus, setCsvStatus] = useState('');
 
-  // Reset Modal State
   const [isResetModalOpen, setIsResetModalOpen] = useState(false);
   const [isResetting, setIsResetting] = useState(false);
 
-  // Load configs
   useEffect(() => {
     const loadConfig = async () => {
         try {
@@ -86,7 +94,6 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, user, onUpdateUser,
     loadConfig();
   }, []);
 
-  // Toast Auto-dismiss
   useEffect(() => {
     if (toast && toast.type !== 'loading') {
       const timer = setTimeout(() => setToast(null), 3000);
@@ -94,14 +101,14 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, user, onUpdateUser,
     }
   }, [toast]);
 
-  // Back key
   useEffect(() => {
     (window as any).__SETTINGS_BACK__ = () => {
       if (view !== 'MAIN') { setView('MAIN'); return "handled"; }
+      if (onBack) { onBack(); return "handled"; }
       return "exit";
     };
     return () => { delete (window as any).__SETTINGS_BACK__; };
-  }, [view]);
+  }, [view, onBack]);
 
   const saveStorageConfig = async (newConfig: StorageConfig) => {
       setStorageConfig(newConfig);
@@ -112,41 +119,94 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, user, onUpdateUser,
       setToast({ message, type });
   };
 
-  // ✅ [核心修复] WebDAV 桥接：支持传入具体文件名
+  // 🔥🔥🔥 通用导入处理逻辑 (Native & Web) 🔥🔥🔥
+  const processBackupContent = async (jsonString: string) => {
+      if (!jsonString) {
+          alert("Backup content is empty.");
+          return;
+      }
+      try {
+          const parsed = JSON.parse(jsonString);
+          const hasData = (Array.isArray(parsed.transactions) && parsed.transactions.length > 0) ||
+                          (Array.isArray(parsed.accounts) && parsed.accounts.length > 0) ||
+                          (Array.isArray(parsed.ledgers));
+
+          if (!hasData) {
+              if (!confirm("备份文件数据为空或格式不匹配。继续导入可能会清空当前数据，是否继续？")) {
+                  return;
+              }
+          }
+
+          // 核心：写入数据库
+          await onImportData(parsed); 
+          
+          // ✅ 关键修改：只弹窗，不刷新，保留你的逻辑流
+          alert("导入成功！");
+          
+      } catch (err) {
+          console.error("Import Parse Error", err);
+          alert("导入失败：文件格式不正确 (Invalid JSON)");
+      }
+  };
+
+  // 监听原生导入回调
+  useEffect(() => {
+      (window as any).onNativeImportSuccess = (content: string) => {
+          processBackupContent(content);
+      };
+      return () => { delete (window as any).onNativeImportSuccess; };
+  }, []);
+
+  // 🔥🔥🔥 触发导入 (Native 优先, Web 兜底) 🔥🔥🔥
+  const triggerImport = () => {
+      // @ts-ignore
+      if (window.JotBillOCR && window.JotBillOCR.importFile) {
+          // @ts-ignore
+          window.JotBillOCR.importFile(); // 鸿蒙原生
+      } else {
+          fileInputRef.current?.click(); // Web 浏览器
+      }
+  };
+
+  const handleImportFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    const fileReader = new FileReader();
+    fileReader.onerror = () => { alert("File Read Error"); event.target.value = ''; };
+    fileReader.onload = (e) => {
+        const resultStr = e.target?.result as string;
+        processBackupContent(resultStr);
+        event.target.value = '';
+    };
+    fileReader.readAsText(file, "UTF-8");
+  };
+
+  // WebDAV Bridge
   const callNativeDav = (action: 'TEST' | 'BACKUP' | 'RESTORE', body?: string, customFilename?: string) => {
       return new Promise<{ ok: boolean; message: string }>((resolve, reject) => {
-          // 查找桥接对象
           const bridge = (window as any).AndroidWebDAV || (window as any).JotBillOCR;
-          
           if (!bridge || typeof bridge.davAction !== 'function') {
               reject(new Error('Native WebDAV bridge not available'));
               return;
           }
           const cbId = `dav_${Date.now()}_${Math.random().toString(16).slice(2)}`;
-          
-          // 挂载回调
           // @ts-ignore
           (window as any).__DAV_CB = (id: string, payload: { ok: boolean; message: string }) => {
               if (id !== cbId) return;
               if (payload.ok) resolve(payload); else reject(new Error(payload.message));
           };
 
-          // 📂 [路径拼接逻辑]
-          // 如果传了文件名，就拼接到目录后面；否则只传目录（用于TEST）
           let finalPath = storageConfig.path || '';
           if (customFilename) {
               if (!finalPath.endsWith('/')) finalPath += '/';
               finalPath += customFilename;
           }
-          // 去掉开头的 / (防止双斜杠)
           if (finalPath.startsWith('/')) finalPath = finalPath.substring(1);
-
-          console.log(`[WebDAV] Calling native: Action=${action}, Path=${finalPath}`);
 
           bridge.davAction(
             action,
             storageConfig.host,
-            finalPath, // 传给鸿蒙的是完整路径
+            finalPath,
             storageConfig.username,
             storageConfig.password,
             body || null,
@@ -174,34 +234,21 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, user, onUpdateUser,
       }
   };
 
-  // ✅ [核心修复] 备份：自动生成带日期的文件名
   const handleDavBackup = async () => {
       setDavLoading('BACKUP');
       showToast(t.backingUp, 'loading');
       try {
           const backupData = await db.getBackupData();
           const jsonString = JSON.stringify(backupData);
-          
-          // 1. 生成带时间戳的文件名：JotBill_20251211_1805.json
           const now = new Date();
-          // 格式化为 YYYYMMDD_HHMM
-          const timeStr = now.getFullYear() +
-                String(now.getMonth() + 1).padStart(2, '0') +
-                String(now.getDate()).padStart(2, '0') + '_' +
-                String(now.getHours()).padStart(2, '0') +
-                String(now.getMinutes()).padStart(2, '0');
+          const timeStr = now.getFullYear() + String(now.getMonth() + 1).padStart(2, '0') + String(now.getDate()).padStart(2, '0') + '_' + String(now.getHours()).padStart(2, '0') + String(now.getMinutes()).padStart(2, '0');
           const historyName = `JotBill_${timeStr}.json`;
           const latestName = `backup_latest.json`;
 
           if ((window as any).AndroidWebDAV || (window as any).JotBillOCR) {
-              // 鸿蒙/安卓：传两次，一次存历史，一次存最新
-              console.log('Uploading history:', historyName);
               await callNativeDav('UPLOAD', jsonString, historyName);
-              
-              console.log('Uploading latest:', latestName);
               await callNativeDav('UPLOAD', jsonString, latestName);
           } else {
-              // Web 兜底
               await uploadToWebDAV(storageConfig, jsonString);
           }
           showToast(t.backupSuccess, 'success');
@@ -212,23 +259,22 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, user, onUpdateUser,
       }
   };
 
-  // ✅ [核心修复] 恢复：读取 backup_latest.json
+  // ✅ 修复：WebDAV 恢复也不刷新
   const handleDavRestore = async () => {
       setDavLoading('RESTORE');
       showToast(t.restoring, 'loading');
       try {
           let data: any;
-          const targetFile = 'backup_latest.json';
-
           if ((window as any).AndroidWebDAV || (window as any).JotBillOCR) {
-              const res = await callNativeDav('RESTORE', undefined, targetFile);
+              const res = await callNativeDav('RESTORE', undefined, 'backup_latest.json');
               data = JSON.parse(res.message);
           } else {
               data = await restoreFromWebDAV(storageConfig);
           }
           if (data) {
-              onImportData(data);
-              showToast(t.restoreSuccess, 'success');
+              await onImportData(data);
+              alert(t.restoreSuccess);
+              // window.location.reload(); // 已移除
           } else {
               throw new Error("Empty response");
           }
@@ -239,7 +285,6 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, user, onUpdateUser,
       }
   };
 
-  // ... (其余 UI 代码保持不变)
   const handleSaveAndExit = () => {
       localStorage.setItem('zenledger_ai_config', JSON.stringify(aiConfig));
       showToast(t.settingsSaved, 'success');
@@ -273,52 +318,45 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, user, onUpdateUser,
       setIsCustomModel(false);
   };
 
+  // ✅ 修复：导出功能 (Web/Native 双兼容)
   const handleExport = async () => {
     try {
         const backupData = await db.getBackupData();
+        if (!backupData) { alert("Nothing to export"); return; }
+
         const jsonString = JSON.stringify(backupData, null, 2);
         const dateStr = new Date().toISOString().split('T')[0];
-        const fileName = `PocketLedger_Backup_${dateStr}.json`;
+        const fileName = `JotBill_Backup_${dateStr}.json`;
 
+        // 1. 鸿蒙原生
         // @ts-ignore
         if (typeof window.JotBillOCR !== 'undefined' && window.JotBillOCR.saveFile) {
             // @ts-ignore
-            window.JotBillOCR.saveFile(fileName, jsonString); return;
+            window.JotBillOCR.saveFile(fileName, jsonString); 
+            return;
         }
+        // 2. Android 原生
         // @ts-ignore
         if (typeof window.Android !== 'undefined' && window.Android.saveFile) {
             // @ts-ignore
-            window.Android.saveFile(fileName, jsonString); return;
+            window.Android.saveFile(fileName, jsonString); 
+            return;
         }
 
+        // 3. Web 浏览器 (Fallback)
         const blob = new Blob([jsonString], { type: "application/json" });
         const url = URL.createObjectURL(blob);
         const link = document.createElement('a');
         link.href = url; link.download = fileName;
         document.body.appendChild(link); link.click();
         document.body.removeChild(link); URL.revokeObjectURL(url);
-        if (!isAndroid) alert(t.backupDownloaded);
+        
+        if (isWeb) alert(t.backupDownloaded);
+
     } catch (error) {
         console.error("Export failed", error);
         alert(t.error + ": " + error);
     }
-  };
-
-  const handleImportFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-    const fileReader = new FileReader();
-    fileReader.readAsText(file, "UTF-8");
-    fileReader.onload = (e) => {
-        if (e.target?.result) {
-            try {
-                const parsed = JSON.parse(e.target.result as string);
-                if (!parsed.transactions && !parsed.accounts && !parsed.ledgers) throw new Error("Invalid backup format");
-                onImportData(parsed);
-            } catch (err) { alert(t.invalidJson); }
-        }
-    };
-    event.target.value = '';
   };
 
   const handleResetClick = () => { setIsResetModalOpen(true); };
@@ -437,16 +475,193 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, user, onUpdateUser,
       }
   };
   
+  // 🔥🔥🔥 完整找回：CSV (微信/支付宝) 解析逻辑 🔥🔥🔥
   const handleCsvFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-      // ... (篇幅原因，CSV 解析逻辑保持原样即可，这里省略了但请保留你原代码中的 CSV 逻辑)
-      // 请务必把之前完整的 handleCsvFileChange 逻辑复制回来，或者我可以再给你发一次
-      // 如果你需要完整的 CSV 代码，请告诉我，这里先略过以突出重点
-      const file = e.target.files?.[0];
-      if (!file || !onBatchAddTransactions) return;
-      setIsCsvLoading(true);
-      // ... 假装处理完了 ...
-      setTimeout(() => setIsCsvLoading(false), 500);
-  };
+    const file = e.target.files?.[0];
+    if (!file || !onBatchAddTransactions) return;
+
+    setIsCsvLoading(true);
+    setCsvStatus(t.parsingCsv);
+
+    const parseCsvText = (raw: string) => {
+      const clean = raw.replace(/^\uFEFF/, '');
+      const lines = clean.split(/\r?\n/);
+      const parsedTxs: any[] = [];
+      const seenIds = new Set<string>(); 
+      let startIdx = -1;
+      let delimiter = ','; 
+
+      // Detect Header 
+      lines.forEach((line, idx) => {
+          const l = line.trim();
+          if (l.startsWith('#')) return; 
+          if (l.includes('交易时间') || l.includes('交易创建时间') || l.toLowerCase().includes('trade time')) {
+              startIdx = idx + 1;
+              if (l.includes('\t')) delimiter = '\t';
+              else if (l.includes(';')) delimiter = ';';
+          }
+      });
+
+      if (startIdx !== -1) {
+          for (let i = startIdx; i < lines.length; i++) {
+              const line = lines[i].trim();
+              if (!line) continue;
+              if (line.startsWith('#')) continue; 
+              const cols = line.split(delimiter).map(s => s.replace(/^\"|\"$/g, '').trim());
+              if (cols.length < 5) continue;
+
+              try {
+                  const rawDate = (cols[0] || '').trim();
+                  let dateKey = '';
+                  let timePart = '';
+                  const parts = rawDate.split(/\s+/);
+                  if (parts.length >= 2) timePart = parts.slice(1).join(' ');
+                  const baseForDate = parts[0] ? parts[0] : new Date().toISOString().split('T')[0];
+                  const parsedDate = new Date(`${baseForDate}T${timePart || '00:00:00'}`);
+                  const safeDate = !isNaN(parsedDate.getTime()) ? parsedDate : new Date();
+                  dateKey = safeDate.toISOString().split('T')[0];
+                  const dateStr = `${dateKey}T${timePart || '00:00:00'}`;
+                  let typeStr = '';
+                  let amount = 0;
+                  let merchant = '';
+                  let desc = '';
+                  let isRefund = false;
+                  let accountName = '';
+                  let txId = '';
+
+                  if (importSource === 'WECHAT') {
+                      merchant = cols[2];
+                      desc = cols[3];
+                      const rawTypeField = (cols[4] || '').trim();
+                      const rawTypeClean = rawTypeField.replace(/\s/g, '');
+                      typeStr = rawTypeField;
+                      const amtStr = (cols[5] || '').replace(/[¥Â¥,\s]/g, '');
+                      amount = parseFloat(amtStr);
+                      const status = cols[7] || '';
+                      const rawStatusClean = status.replace(/\s/g, '');
+                      txId = cols[8] || cols[7] || cols[3] || '';
+
+                      if (rawTypeClean.includes('不计收支') || rawStatusClean.includes('不计收支') || rawTypeClean.includes('零钱提现')) {
+                          typeStr = '支出';
+                      }
+                      const nType = rawTypeClean.toLowerCase();
+                      const nStatus = rawStatusClean.toLowerCase();
+                      isRefund = nType.includes('退款') || nStatus.includes('退款') || nType.includes('refund');
+                      if (isRefund) typeStr = '收入';
+                  } else { // ALIPAY
+                      merchant = cols[2] || cols[3] || '';
+                      desc = cols[4] || '';
+                      const rawTypeField = (cols[5] || '').trim();
+                      const rawTypeClean = rawTypeField.replace(/\s/g, '');
+                      const amtStr = (cols[6] || '').replace(/[￥?￥,\s]/g, '');
+                      amount = parseFloat(amtStr);
+                      typeStr = rawTypeField;
+                      const payAccount = cols[7] || '';
+                      const status = cols[8] || '';
+                      const rawStatusClean = status.replace(/\s/g, '');
+                      txId = cols[9] || cols[10] || cols[3] || '';
+
+                      if (rawTypeClean.includes('不计收支') || rawStatusClean.includes('不计收支') || rawTypeClean.includes('零钱提现')) {
+                          typeStr = '支出';
+                      }
+                      const nType = rawTypeClean.toLowerCase();
+                      const nStatus = rawStatusClean.toLowerCase();
+                      isRefund = nType.includes('退款') || nStatus.includes('退款') || nType.includes('refund');
+                      if (isRefund) typeStr = '收入';
+                      if (payAccount.includes('花呗')) accountName = '花呗';
+                      else if (payAccount.includes('余额宝')) accountName = '余额宝';
+                      if (!accountName) accountName = '支付宝';
+                  }
+
+                  if (!isFinite(amount)) continue;
+
+                  const normalizedType = (typeStr || '').replace(/\s/g, '');
+                  const lower = normalizedType.toLowerCase();
+                  let type: TransactionType = TransactionType.EXPENSE;
+                  if (normalizedType.includes('\u6536\u5165') || lower.includes('income') || normalizedType.includes('退款')) type = TransactionType.INCOME;
+                  else if (normalizedType.includes('\u652f\u51fa') || lower.includes('expense') || normalizedType.includes('\u51fa')) type = TransactionType.EXPENSE;
+                  else {
+                      if (amount > 0) type = TransactionType.INCOME;
+                      else if (amount < 0) type = TransactionType.EXPENSE;
+                      else continue;
+                  }
+                  const absAmount = Math.abs(amount);
+                  if (!isRefund) {
+                      const combined = `${desc}${merchant}${typeStr}`.toLowerCase();
+                      if (combined.includes('退款') || combined.includes('refund')) isRefund = true;
+                  }
+                  let categoryValue = desc || merchant;
+                  if (isRefund) {
+                      categoryValue = '退款';
+                  } else {
+                      const lowerDesc = `${desc}${merchant}`.toLowerCase();
+                      const isTransport = ['公交', '地铁', '打车', '出租', '滴滴', '高德', '快车', '专车', '顺风车', '地铁', '火车', '高铁', '车票', '航班', '机场', '地铁', '公交车', '巴士'].some(k => lowerDesc.includes(k));
+                      const isShopping = ['日用百货', '百货', '购物', '超市', '便利店', '商场', '沃尔玛', '大润发', '永辉', '盒马', '京东', '淘宝', '拼多多', '唯品会'].some(k => lowerDesc.includes(k));
+                      if (isTransport) categoryValue = '交通';
+                      else if (isShopping) categoryValue = '购物';
+                  }
+
+                  if (txId) {
+                      if (seenIds.has(txId)) continue;
+                      seenIds.add(txId);
+                  }
+
+                  parsedTxs.push({
+                      date: dateStr,
+                      type,
+                      amount: absAmount,
+                      currency: 'CNY',
+                      merchant,
+                      description: desc || merchant,
+                      category: categoryValue,
+                      accountName: importSource === 'WECHAT' ? '微信' : (accountName || '支付宝')
+                  });
+              } catch (err) {}
+          }
+      }
+      return parsedTxs;
+    };
+
+    const finish = (txs: any[]) => {
+      setIsCsvLoading(false);
+      setCsvStatus('');
+      if (txs.length > 0) {
+          onBatchAddTransactions(txs);
+          alert(`${t.success}: ${txs.length} ${t.importedCount}`);
+      } else {
+          alert(`${t.noValidTxs}\n(未解析到行，文件可能为空或列序不匹配)`);
+      }
+      e.target.value = '';
+    };
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const text = event.target?.result as string;
+      if (!text) {
+          setIsCsvLoading(false);
+          alert('文件内容为空，未能解析');
+          return;
+      }
+      let parsed = parseCsvText(text);
+      if (parsed.length > 0) {
+          finish(parsed);
+      } else {
+          console.warn('CSV parse empty on UTF-8, trying GBK');
+          const readerGbk = new FileReader();
+          readerGbk.onload = (ev) => {
+              const txt = ev.target?.result as string;
+              if (!txt) {
+                  setIsCsvLoading(false);
+                  alert('GBK 读取为空，未能解析');
+                  return;
+              }
+              finish(parseCsvText(txt));
+          };
+          readerGbk.readAsText(file, 'GBK');
+      }
+    };
+    reader.readAsText(file, 'UTF-8');
+};
 
   const Header = ({ title, backFn }: { title: string, backFn: () => void }) => (
     <div className="bg-white/90 backdrop-blur-md px-4 py-3 border-b border-gray-200/50 flex items-center gap-4 sticky top-0 z-10">
@@ -505,7 +720,9 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, user, onUpdateUser,
                    <button onClick={() => setView('STORAGE')} className="w-full p-4 flex items-center justify-between hover:bg-gray-50 transition-colors border-b border-gray-100 group"><div className="flex items-center gap-3"><div className="p-2 bg-blue-50 text-blue-600 rounded-lg group-hover:bg-blue-100 transition-colors"><Server size={20}/></div><span className="font-bold text-gray-700">{t.storage}</span></div><ChevronRight className="text-gray-300 group-hover:text-gray-500 transition-colors" /></button>
                    <button onClick={() => setView('SMART_IMPORT')} className="w-full p-4 flex items-center justify-between hover:bg-gray-50 transition-colors border-b border-gray-100"><div className="flex items-center gap-3"><div className="p-2 bg-green-50 text-green-600 rounded-lg"><ScanLine size={20}/></div><span className="font-bold text-gray-700">{t.smartImport}</span></div><ChevronRight className="text-gray-300" /></button>
                    <button onClick={handleExport} className="w-full p-4 flex items-center justify-between hover:bg-gray-50 transition-colors border-b border-gray-100"><div className="flex items-center gap-3"><div className="p-2 bg-orange-50 text-orange-600 rounded-lg"><Download size={20}/></div><span className="font-bold text-gray-700">{t.export}</span></div></button>
-                   <button onClick={() => fileInputRef.current?.click()} className="w-full p-4 flex items-center justify-between hover:bg-gray-50 transition-colors"><div className="flex items-center gap-3"><div className="p-2 bg-indigo-50 text-indigo-600 rounded-lg"><Upload size={20}/></div><span className="font-bold text-gray-700">{t.import}</span></div><input type="file" ref={fileInputRef} className="hidden" accept=".json,application/json,*/*" onChange={handleImportFileChange}/></button>
+                   {/* 🔥🔥🔥 修复导入按钮：同时支持原生触发和 Web input 🔥🔥🔥 */}
+                   <button onClick={triggerImport} className="w-full p-4 flex items-center justify-between hover:bg-gray-50 transition-colors"><div className="flex items-center gap-3"><div className="p-2 bg-indigo-50 text-indigo-600 rounded-lg"><Upload size={20}/></div><span className="font-bold text-gray-700">{t.import}</span></div>
+                   <input type="file" ref={fileInputRef} style={{ display: 'none' }} accept=".json,application/json,*/*" onChange={handleImportFileChange} value={''}/></button>
                 </div>
              </div>
              <div>
@@ -514,7 +731,7 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, user, onUpdateUser,
                     <button onClick={handleResetClick} className="w-full p-4 flex items-center gap-3 text-red-500 hover:bg-red-50 transition-colors"><Trash2 size={20} /><span className="font-bold">{t.resetData}</span></button>
                 </div>
              </div>
-             <div className="text-center pt-8 pb-4"><p className="text-xs text-gray-400 font-bold">小计一笔</p></div>
+             <div className="text-center pt-8 pb-4"><p className="text-xs text-gray-400 font-bold">ZenLedger AI v6.2</p></div>
           </div>
          </>
       )}
@@ -814,7 +1031,6 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, user, onUpdateUser,
                         onClick={() => {
                           const bridge = (window as any).JotBillOCR;
                           if (bridge && typeof bridge.triggerOCR === 'function') {
-                            // ✅ [关键修改 2] 点击按钮时，立即开启加载状态
                             setIsScreenshotLoading(true);
                             setScreenshotStatus(t.analyzing);
                             

@@ -21,12 +21,12 @@ const MobileNavbar: React.FC<MobileNavbarProps> = ({ activeTab, setActiveTab, us
     uiPrefs.showAccounts && { id: 'accounts', label: t.accounts, icon: <CreditCard size={22} /> },
   ].filter(Boolean) as { id: string; label: string; icon: React.ReactNode }[];
 
-  // Grid columns adjustment based on visible items
-  const gridCols = `grid-cols-${navItems.length}`;
-
   return (
     <div className="md:hidden fixed bottom-0 left-0 right-0 bg-white/90 backdrop-blur-xl border-t border-gray-200 pb-safe pt-2 z-40">
-      <div className={`grid ${gridCols} px-6`}>
+      <div
+        className="grid px-6"
+        style={{ gridTemplateColumns: `repeat(${Math.max(navItems.length, 1)}, minmax(0, 1fr))` }}
+      >
         {navItems.map((item) => {
           const isActive = activeTab === item.id;
           return (

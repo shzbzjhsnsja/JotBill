@@ -1,4 +1,3 @@
-
 import { GoogleGenAI, Type } from "@google/genai";
 import { AIParseResult, TransactionType, AIConfig } from '../types';
 import { DEFAULT_AI_CONFIG } from '../constants';
@@ -20,7 +19,7 @@ const getAIConfig = (): AIConfig => {
 const parseSchema = {
   type: Type.OBJECT,
   properties: {
-    amount: { type: Type.NUMBER, description: "The numeric value of the transaction." },
+    amount: { type: Type.NUMBER, description: "The numeric value of the transaction. MUST be a pure number, no currency symbols." },
     currency: { type: Type.STRING, description: "Currency code, e.g., USD, EUR, CNY." },
     category: { type: Type.STRING, description: "A short category name derived from context." },
     date: { type: Type.STRING, description: "ISO 8601 date string (YYYY-MM-DD). If not specified, use today." },
@@ -49,7 +48,7 @@ const generateContent = async (
     throw new Error("API Key is missing. Please configure it in Settings.");
   }
 
-  // === BRANCH A: Google Gemini ===
+  // === BRANCH A: Google Gemini (Native Schema Support) ===
   if (config.provider === 'GEMINI') {
     const ai = new GoogleGenAI({ apiKey: config.apiKey });
     try {
@@ -75,9 +74,9 @@ const generateContent = async (
     }
   } 
   
-  // === BRANCH B: DeepSeek / OpenAI / Custom ===
+  // === BRANCH B: DeepSeek / OpenAI / Custom (Manual Schema Injection) ===
   else {
-    let baseUrl = config.baseUrl || (config.provider === 'DEEPSEEK' ? 'https://api.deepseek.com' : '');
+    let baseUrl = config.baseUrl || (config.provider === 'DEEPSEEK' ? '[https://api.deepseek.com](https://api.deepseek.com)' : '');
     
     // Normalize URL: Remove trailing slash
     baseUrl = baseUrl.replace(/\/$/, "");
@@ -113,9 +112,22 @@ const generateContent = async (
          messages[1].content = contentParts;
     }
 
-    // Force JSON in system prompt if schema exists (since generic providers handle schema differently)
+    // ✅ [关键修复] 手动注入 Schema 到 System Prompt
+    // DeepSeek 等模型不一定原生支持 strict schema mode，所以通过 Prompt 告诉它结构
     if (schema) {
-        messages[0].content += "\n\nIMPORTANT: Output strictly valid JSON matching the schema of a finance transaction (amount, currency, category, date, description, merchant, type, accountName). Do not include markdown code blocks.";
+        const schemaStr = JSON.stringify(schema, null, 2);
+        messages[0].content += `
+        
+IMPORTANT OUTPUT RULES:
+1. You MUST return strictly valid JSON.
+2. Do NOT wrap the JSON in markdown code blocks (like \`\`\`json).
+3. The JSON must strictly follow this Schema definition:
+${schemaStr}
+
+4. FIELD RULES:
+   - "amount": Must be a pure number. REMOVE all currency symbols (￥, $, etc.) and commas.
+   - "date": Use YYYY-MM-DD format.
+`;
     }
 
     // DeepSeek reasoner 对 response_format 兼容性差，出现 400 时去掉该字段
@@ -138,8 +150,9 @@ const generateContent = async (
       });
 
       if (!response.ok) {
+        const errorText = await response.text();
         if (response.status === 401) throw new Error("401 Unauthorized: Invalid API Key.");
-        throw new Error(`API Request Failed: ${response.status} ${response.statusText}`);
+        throw new Error(`API Request Failed: ${response.status} ${errorText}`);
       }
 
       const data = await response.json();
@@ -183,7 +196,7 @@ export const parseTransactionText = async (text: string, language: 'en' | 'zh' =
     ? "Return the 'category', 'description', and 'merchant' fields in Simplified Chinese." 
     : "Return fields in English.";
   
-  const systemPrompt = `You are a financial parsing assistant. Parse the following transaction text into a structured JSON object. 
+  const systemPrompt = `You are a financial parsing assistant. Parse the provided transaction text into the structured JSON object defined in the schema. 
       If the date is missing, assume it is ${new Date().toISOString().split('T')[0]}.
       Try to identify the payment account name if mentioned (e.g., 'WeChat', 'Alipay', 'Credit Card').
       ${langInstruction}`;
@@ -191,8 +204,18 @@ export const parseTransactionText = async (text: string, language: 'en' | 'zh' =
   try {
     const jsonText = await generateContent(systemPrompt, text, parseSchema);
     if (!jsonText) return null;
-    // Clean up potential markdown code blocks if provider didn't respect JSON mode perfectly
-    const cleanJson = jsonText.replace(/```json/g, '').replace(/```/g, '').trim();
+    
+    // Clean up potential markdown code blocks (even if instructed not to use them)
+    // 移除 markdown 标记以及可能的前后空白
+    let cleanJson = jsonText.replace(/```json/g, '').replace(/```/g, '').trim();
+    
+    // 某些模型可能会在 JSON 前后加杂质，尝试找到第一个 { 和最后一个 }
+    const firstBrace = cleanJson.indexOf('{');
+    const lastBrace = cleanJson.lastIndexOf('}');
+    if (firstBrace !== -1 && lastBrace !== -1) {
+        cleanJson = cleanJson.substring(firstBrace, lastBrace + 1);
+    }
+
     const parsed = JSON.parse(cleanJson) as AIParseResult;
 
     // 如果缺少时间，尝试从原始文本抽取；或为日期补上时间
@@ -207,7 +230,8 @@ export const parseTransactionText = async (text: string, language: 'en' | 'zh' =
 
     return parsed;
   } catch (error) {
-    alert((error as Error).message);
+    console.error("Parse Text Error:", error);
+    // 不再弹窗 alert，而是静默失败返回 null，让 UI 层处理 Toast
     return null;
   }
 };
@@ -226,10 +250,17 @@ export const parseTransactionImage = async (base64Image: string): Promise<AIPars
   try {
     const jsonText = await generateContent(systemPrompt, userContent, { type: Type.ARRAY, items: parseSchema });
     if (!jsonText) return null;
-    const cleanJson = jsonText.replace(/```json/g, '').replace(/```/g, '').trim();
+    
+    let cleanJson = jsonText.replace(/```json/g, '').replace(/```/g, '').trim();
+    const firstBracket = cleanJson.indexOf('[');
+    const lastBracket = cleanJson.lastIndexOf(']');
+    if (firstBracket !== -1 && lastBracket !== -1) {
+        cleanJson = cleanJson.substring(firstBracket, lastBracket + 1);
+    }
+
     return JSON.parse(cleanJson) as AIParseResult[];
   } catch (error) {
-    alert((error as Error).message);
+    console.error("Parse Image Error:", error);
     return null;
   }
 };
@@ -303,8 +334,8 @@ export const generateFinancialReport = async (prompt: string, language: 'en' | '
     const text = await generateContent(systemInstruction, prompt);
     return text || "No analysis generated.";
   } catch (error) {
-    alert((error as Error).message);
-    return null;
+    console.error(error);
+    return null; // Silent fail
   }
 };
 

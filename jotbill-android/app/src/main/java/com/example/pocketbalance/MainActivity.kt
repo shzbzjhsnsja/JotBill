@@ -342,8 +342,8 @@ class MainActivity : AppCompatActivity() {
         })
 
         // === 加载网页 (已找回你的注释代码) ===
-        webView.loadUrl("http://10.0.0.103:3000/")
-        //webView.loadUrl("https://appassets.androidplatform.net/assets/index.html") // 这是你之前用的本地加载
+        //webView.loadUrl("http://10.0.0.103:3000/")
+        webView.loadUrl("https://appassets.androidplatform.net/assets/index.html") // 这是你之前用的本地加载
 
         // === 手势/系统返回：优先让前端后退；仅在首页时退出 Activity ===
         onBackPressedDispatcher.addCallback(this, object : androidx.activity.OnBackPressedCallback(true) {

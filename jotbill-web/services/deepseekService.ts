@@ -1,6 +1,10 @@
 import { AIParseResult, TransactionType, AIConfig } from '../types';
 
-// --- CONFIGURATION HELPER ---
+// ============================================================================
+// 1. 配置与辅助工具
+// ============================================================================
+
+// --- Configuration Loader ---
 const getDeepSeekConfig = (): AIConfig => {
   try {
     const stored = localStorage.getItem('zenledger_ai_config');
@@ -13,39 +17,79 @@ const getDeepSeekConfig = (): AIConfig => {
   } catch (e) {
     console.warn("Failed to load DeepSeek config", e);
   }
+  // 默认回退配置
   return {
     provider: 'DEEPSEEK',
     apiKey: '',
-    baseUrl: 'https://api.deepseek.com/v1',
+    baseUrl: 'https://api.deepseek.com',
     model: 'deepseek-chat'
   };
 };
 
-// --- SCHEMA DEFINITIONS ---
+// --- Schema Definitions ---
+// 这是核心：定义我们期望 AI 返回的严格格式
 const parseSchema = {
   type: 'object',
   properties: {
-    amount: { type: 'number', description: "The numeric value of the transaction." },
-    currency: { type: 'string', description: "Currency code, e.g., USD, EUR, CNY." },
-    category: { type: 'string', description: "A short category name derived from context." },
-    date: { type: 'string', description: "ISO 8601 date string (YYYY-MM-DD). If not specified, use today." },
-    description: { type: 'string', description: "A brief description of what was purchased or the income source." },
-    merchant: { type: 'string', description: "The name of the merchant or payee." },
+    amount: { type: 'number', description: "The numeric value. MUST be a number (e.g. 20.5), NOT a string. Remove currency symbols." },
+    currency: { type: 'string', description: "Currency code, e.g., CNY." },
+    category: { type: 'string', description: "Category: 餐饮, 交通, 购物, 日用, 娱乐, etc." },
+    date: { type: 'string', description: "YYYY-MM-DD format." },
+    description: { type: 'string', description: "Brief description of the transaction." },
+    merchant: { type: 'string', description: "Merchant name." },
     type: { 
       type: 'string', 
       enum: [TransactionType.EXPENSE, TransactionType.INCOME, TransactionType.TRANSFER],
-      description: "Whether it is an expense or income." 
+      description: "EXPENSE, INCOME, or TRANSFER"
     },
-    accountName: { type: 'string', description: "The name of the payment method or account used (e.g. 'WeChat', 'Bank Card', 'Cash')." }
+    accountName: { type: 'string', description: "Payment method: WeChat, Alipay, Bank Card, Cash, etc." }
   },
   required: ["amount", "description", "type", "date"],
 };
 
-// --- CORE GENERATION FUNCTION ---
+// --- Helper: Robust JSON Extractor ---
+// 即使 AI 返回了 markdown 或废话，也能提取出合法的 JSON
+const extractJSON = (text: string): any => {
+    if (!text) throw new Error("AI returned empty response");
+    
+    let clean = text.trim();
+    // 1. 去除 Markdown 代码块标记
+    clean = clean.replace(/```json/g, '').replace(/```/g, '').trim();
+
+    // 2. 寻找最外层的 {}
+    const firstBrace = clean.indexOf('{');
+    const lastBrace = clean.lastIndexOf('}');
+    
+    if (firstBrace !== -1 && lastBrace !== -1) {
+        clean = clean.substring(firstBrace, lastBrace + 1);
+    }
+
+    try {
+        return JSON.parse(clean);
+    } catch (e) {
+        console.error("JSON Parse Failed. Raw text:", text);
+        throw new Error("AI response was not valid JSON.");
+    }
+};
+
+// --- Helper: Time Extractor ---
+const extractTime = (txt: string): string | null => {
+  const m = txt.match(/(\d{1,2})[:：点\.](\d{1,2})/);
+  if (!m) return null;
+  const h = parseInt(m[1]).toString().padStart(2, '0');
+  const min = parseInt(m[2]).toString().padStart(2, '0');
+  return `${h}:${min}`;
+};
+
+// ============================================================================
+// 2. 核心 API 调用函数
+// ============================================================================
+
 const generateContent = async (
   systemPrompt: string, 
   userPrompt: string,
-  configOverride?: AIConfig
+  configOverride?: AIConfig,
+  jsonMode: boolean = true // 新增参数：控制是否强制 JSON 模式
 ): Promise<string | null> => {
   const config = configOverride || getDeepSeekConfig();
   
@@ -53,17 +97,14 @@ const generateContent = async (
     throw new Error("DeepSeek API Key is missing. Please configure it in Settings.");
   }
 
-  let baseUrl = config.baseUrl || 'https://api.deepseek.com/v1';
-  
-  // Normalize URL: Remove trailing slash
+  let baseUrl = config.baseUrl || 'https://api.deepseek.com';
   baseUrl = baseUrl.replace(/\/$/, "");
   
-  // Auto-append path if missing
-  if (!baseUrl.includes("/v1/")) {
-    baseUrl += "/v1";
-  }
-  if (!baseUrl.includes("/chat/completions")) {
-    baseUrl += "/chat/completions";
+  // 智能路径补全
+  if (!baseUrl.includes("/v1") && !baseUrl.includes("/chat")) {
+     baseUrl += "/chat/completions";
+  } else if (baseUrl.endsWith("/v1")) {
+     baseUrl += "/chat/completions";
   }
 
   const messages: any[] = [
@@ -82,18 +123,21 @@ const generateContent = async (
         model: config.model || 'deepseek-chat',
         messages: messages,
         stream: false,
-        temperature: 0.7
+        // 如果是记账解析，温度低一点(准确)；如果是写周报，温度高一点(创意)
+        temperature: jsonMode ? 0.1 : 0.7, 
+        // ✅ 关键：强制 JSON 模式 (DeepSeek V2.5/V3 支持)
+        response_format: jsonMode ? { type: "json_object" } : undefined 
       })
     });
 
     if (!response.ok) {
-      if (response.status === 401) throw new Error("401 Unauthorized: Invalid API Key.");
-      throw new Error(`API Request Failed: ${response.status} ${response.statusText}`);
+      const errText = await response.text();
+      if (response.status === 401) throw new Error("401 Unauthorized: Check API Key");
+      throw new Error(`API Error ${response.status}: ${errText}`);
     }
 
     const data = await response.json();
-    const text = data.choices?.[0]?.message?.content;
-    return text || null;
+    return data.choices?.[0]?.message?.content || null;
 
   } catch (error) {
     console.error("DeepSeek API Error:", error);
@@ -101,161 +145,104 @@ const generateContent = async (
   }
 };
 
-// --- EXPORTED SERVICES ---
+// ============================================================================
+// 3. 导出服务 (Business Logic)
+// ============================================================================
 
 /**
- * 简易时间提取：支持 "10:00" / "10点" / "下午3点半" / "早上8点20" 等
- */
-const extractTime = (txt: string): string | null => {
-  const amWords = ['上午', '早上', '凌晨', '清晨', 'am', 'a.m'];
-  const pmWords = ['下午', '傍晚', '晚上', '晚间', 'pm', 'p.m', '中午'];
-  const lower = txt.toLowerCase();
-  const hasAM = amWords.some(w => txt.includes(w) || lower.includes(w));
-  const hasPM = pmWords.some(w => txt.includes(w) || lower.includes(w));
-
-  const m = txt.match(/(\d{1,2})(?:[:：点\.](\d{1,2}))?(?:分)?(?:半)?/);
-  if (!m) return null;
-  let h = parseInt(m[1], 10);
-  let min = m[2] ? parseInt(m[2], 10) : 0;
-  const hasHalf = /半/.test(m[0]);
-  if (hasHalf && !m[2]) min = 30;
-  if (hasPM && h < 12) h += 12;
-  if (hasAM && h === 12) h = 0;
-  if (h >= 24 || min >= 60) return null;
-  const hh = h.toString().padStart(2, '0');
-  const mm = min.toString().padStart(2, '0');
-  return `${hh}:${mm}`;
-};
-
-/**
- * 使用 DeepSeek 解析文本交易信息
+ * 核心功能：解析普通文本 (包含 OCR 文本)
  */
 export const parseTransactionText = async (
   text: string, 
   language: 'en' | 'zh' = 'en'
 ): Promise<AIParseResult | null> => {
+  
+  // 1. 将 Schema 转为字符串，注入 Prompt
+  const schemaStr = JSON.stringify(parseSchema, null, 2);
+  
   const langInstruction = language === 'zh' 
-    ? "Return the 'category', 'description', and 'merchant' fields in Simplified Chinese." 
+    ? "Return 'category', 'description', 'merchant' in Simplified Chinese." 
     : "Return fields in English.";
   
-  const systemPrompt = `You are a financial parsing assistant. Parse the following transaction text into a structured JSON object. 
-      If the date is missing, assume it is ${new Date().toISOString().split('T')[0]}.
-      Try to identify the payment account name if mentioned (e.g., 'WeChat', 'Alipay', 'Credit Card').
-      ${langInstruction}
-      
-      IMPORTANT: Output ONLY valid JSON without markdown code blocks or any other text.`;
+  // 2. 构造 System Prompt，包含 Schema 和 强制规则
+  const systemPrompt = `You are a financial data parser.
+  
+RULES:
+1. You MUST output strict JSON.
+2. The JSON structure MUST match this schema:
+${schemaStr}
+
+3. 'amount' field MUST be a pure number. REMOVE '¥', '$', or ',' symbols.
+4. If date is missing, use ${new Date().toISOString().split('T')[0]}.
+5. 'type' must be: EXPENSE, INCOME, or TRANSFER.
+
+${langInstruction}`;
 
   try {
-    const jsonText = await generateContent(systemPrompt, text);
+    console.log("[DeepSeek] Analyzing text:", text);
+    // 强制开启 JSON 模式
+    const jsonText = await generateContent(systemPrompt, text, undefined, true);
+    
     if (!jsonText) return null;
     
-    // Clean up potential markdown code blocks
-    const cleanJson = jsonText.replace(/```json/g, '').replace(/```/g, '').trim();
-    const parsed = JSON.parse(cleanJson) as AIParseResult;
+    // 3. 解析与提取
+    const parsed = extractJSON(jsonText) as AIParseResult;
 
-    // 如果缺少时间，尝试从原始文本抽取
+    // 4. 后处理：补全时间信息
     const timeHint = extractTime(text);
-    const baseDate = parsed.date && parsed.date.split('T')[0] 
-      ? parsed.date.split('T')[0] 
-      : new Date().toISOString().split('T')[0];
-      
+    const baseDate = parsed.date.includes('T') ? parsed.date.split('T')[0] : parsed.date;
+    
     if (timeHint) {
       parsed.date = `${baseDate}T${timeHint}:00`;
-    } else if (parsed.date && !parsed.date.includes('T')) {
-      parsed.date = `${parsed.date}T00:00:00`;
+    } else {
+      parsed.date = `${baseDate}T00:00:00`;
     }
 
     return parsed;
   } catch (error) {
     console.error("DeepSeek parse error:", error);
-    return null;
+    return null; // 让上层 UI 处理空结果
   }
 };
 
 /**
- * 使用 DeepSeek 解析 OCR 文本（专用版本）
- * 专为 HarmonyOCR 识别结果优化
+ * 兼容旧代码的 OCR 解析入口 (实际逻辑与 parseTransactionText 相同)
  */
 export const parseOCRText = async (
   ocrText: string,
   language: 'en' | 'zh' = 'zh'
 ): Promise<AIParseResult | null> => {
-  const langInstruction = language === 'zh' 
-    ? "用简体中文返回 category、description 和 merchant 字段。" 
-    : "Return fields in English.";
-  
-  const systemPrompt = `你是一个财务数据解析助手。请将以下 OCR 识别到的收据/账单文本解析为交易信息。
-      
-返回格式必须是有效的 JSON，包含以下字段（都是必需的）：
-- amount: 金额（数字类型，例如 99.99）
-- currency: 货币代码（如 CNY, USD 等）
-- category: 交易类别（如 餐饮、交通、购物、电费等）
-- date: 日期（ISO 8601 格式 YYYY-MM-DD，如无法从图片识别则用今天日期）
-- description: 交易描述（简短说明购买内容）
-- merchant: 商户名称（店铺名或支付方名称）
-- type: 交易类型（只能是 EXPENSE、INCOME 或 TRANSFER 之一）
-- accountName: 账户名称（支付方式，如 WeChat、Alipay、Bank Card、Cash 等）
-
-${langInstruction}
-
-IMPORTANT: 
-1. 只返回有效的 JSON，不要包含任何 markdown 代码块或其他文本
-2. 所有金额必须是数字类型，不要带符号
-3. 日期必须是 YYYY-MM-DD 格式
-4. type 字段只能是这三个值之一：EXPENSE、INCOME、TRANSFER`;
-
-  try {
-    const jsonText = await generateContent(systemPrompt, `请解析以下 OCR 识别的文本：\n\n${ocrText}`);
-    if (!jsonText) return null;
-    
-    // 清理 markdown 代码块
-    const cleanJson = jsonText.replace(/```json/g, '').replace(/```/g, '').trim();
-    const parsed = JSON.parse(cleanJson) as AIParseResult;
-
-    // 确保日期格式正确
-    if (!parsed.date) {
-      parsed.date = new Date().toISOString().split('T')[0];
-    }
-    
-    if (parsed.date && !parsed.date.includes('T')) {
-      parsed.date = `${parsed.date}T00:00:00`;
-    }
-
-    return parsed;
-  } catch (error) {
-    console.error("DeepSeek OCR parse error:", error);
-    return null;
-  }
+    return parseTransactionText(ocrText, language);
 };
 
 /**
- * 使用 DeepSeek 生成财务报告
+ * 生成财务周报/月报 (Markdown 模式)
  */
 export const generateFinancialReport = async (
   prompt: string, 
   language: 'en' | 'zh'
 ): Promise<string | null> => {
-  const chineseSystemInstruction = `你是 "Pocket Ledger AI" (口袋账本 AI)，一位温暖、共情且数据驱动的财务教练。
-**语气:** 友善、鼓励、专业。强调风险/浪费与改进空间，给出清晰的下一步行动。
-**输出格式:** Markdown + Emoji
-
-**内容结构:**
-1. 💀 **致命一击 (The Roast):** 用一句话犀利地评价消费行为。
-2. 📊 **账单解剖 (The Reality):** 简要分析花费最多的类别。
-3. 🛡️ **避坑指南 (The Advice):** 给出一个可操作的建议，带有讽刺意味。`;
-
-  const englishSystemInstruction = `You are "Pocket Ledger AI", a warm, empathic, and data-driven financial coach.
-**Tone:** Friendly, encouraging, and professional. Highlight risks/waste and give clear next-step actions.
-**Output Format:** Markdown with Emojis.
+  const chineseSystemInstruction = `你是 "Pocket Ledger AI"，一位温暖、共情且专业的财务教练。
+**Tone:** 友善、鼓励。强调风险与改进空间。
+**Format:** Markdown + Emoji
 **Content:**
-1. 💀 **The Roast:** A one-sentence savage comment on their spending.
-2. 📊 **The Reality:** Briefly analyze top spending categories.
-3. 🛡️ **The Advice:** One actionable, sarcastic tip for next month.`;
+1. 💀 **致命一击 (The Roast):** 一句犀利的评价。
+2. 📊 **账单解剖:** 分析最大支出。
+3. 🛡️ **避坑指南:** 一个可操作的建议。`;
+
+  const englishSystemInstruction = `You are "Pocket Ledger AI", a warm, empathic financial coach.
+**Tone:** Friendly, encouraging, professional.
+**Format:** Markdown + Emoji
+**Content:**
+1. 💀 **The Roast:** A savage comment.
+2. 📊 **The Reality:** Analysis.
+3. 🛡️ **The Advice:** Actionable tip.`;
 
   const systemInstruction = language === 'zh' ? chineseSystemInstruction : englishSystemInstruction;
 
   try {
-    const text = await generateContent(systemInstruction, prompt);
+    // ⚠️ 注意：这里 jsonMode = false，因为我们需要 Markdown 文本
+    const text = await generateContent(systemInstruction, prompt, undefined, false);
     return text || "No analysis generated.";
   } catch (error) {
     console.error("DeepSeek report error:", error);
@@ -264,16 +251,19 @@ export const generateFinancialReport = async (
 };
 
 /**
- * 测试 DeepSeek 连接
+ * 测试连接
  */
 export const testDeepSeekConnection = async (config: AIConfig): Promise<string> => {
-  const systemPrompt = "You are a test assistant. Reply with 'Pong' only.";
-  const userPrompt = "Ping";
-  
-  const response = await generateContent(systemPrompt, userPrompt, config);
-  
-  if (!response) {
-    throw new Error("Empty response from DeepSeek");
-  }
-  return response;
+  // 测试时强制 JSON 模式，确保 API Key 和 JSON Mode 都正常工作
+  const res = await generateContent(
+      "You are a test bot. Reply with JSON: {\"reply\": \"Pong\"}", 
+      "Ping", 
+      config, 
+      true
+  );
+  return res || "Pong";
 };
+
+// 占位符：兼容 geminiService 的图片接口 (DeepSeek 纯文本模式不支持图片流)
+export const parseTransactionImage = async () => { return null; } 
+export const parseTransactionImageWithGemini = async () => { return null; }

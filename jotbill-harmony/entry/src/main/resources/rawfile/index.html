@@ -4,32 +4,9 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <title>ZenLedger AI</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
-    <script>
-      tailwind.config = {
-        theme: {
-          extend: {
-            fontFamily: {
-              sans: ['Inter', 'system-ui', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'sans-serif'],
-            },
-            colors: {
-              apple: {
-                gray: '#F5F5F7',
-                blue: '#007AFF',
-                green: '#34C759',
-                red: '#FF3B30',
-                orange: '#FF9500',
-                purple: '#AF52DE',
-                card: '#FFFFFF',
-              }
-            }
-          },
-        },
-      }
-    </script>
+    <!-- Local Tailwind CDN build (no external network calls) -->
+ 
+    
     <style>
       /* Global Layout Resets */
       * {
@@ -89,7 +66,8 @@
       
       input[type=number] {
         -moz-appearance: textfield !important;
-        appearance: textfield !important;
+        -webkit-appearance: textfield !important;
+                appearance: textfield !important;
       }
 
       /* --- HIGH PERFORMANCE ANIMATIONS (60FPS) --- */
@@ -154,23 +132,14 @@
         padding-bottom: env(safe-area-inset-bottom);
       }
     </style>
-
-<link rel="stylesheet" href="/index.css">
-  <script type="importmap">
-{
-  "imports": {
-    "react/": "https://aistudiocdn.com/react@^19.2.0/",
-    "react": "https://aistudiocdn.com/react@^19.2.0",
-    "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/",
-    "@google/genai": "https://aistudiocdn.com/@google/genai@^1.30.0",
-    "lucide-react": "https://aistudiocdn.com/lucide-react@^0.554.0",
-    "recharts": "https://aistudiocdn.com/recharts@^3.5.0"
-  }
-}
-</script>
-  <script type="module" crossorigin src="./assets/index-Dp3Oqoy9.js"></script>
+  
+  <link rel="stylesheet"  href="./assets/index-VEIGZq3k.css">
+  
 </head>
   <body>
     <div id="root"></div>
+  <script>!function(){var e=document,t=e.createElement("script");if(!("noModule"in t)&&"onbeforeload"in t){var n=!1;e.addEventListener("beforeload",(function(e){if(e.target===t)n=!0;else if(!e.target.hasAttribute("nomodule")||!n)return;e.preventDefault()}),!0),t.type="module",t.src=".",e.head.appendChild(t),t.remove()}}();</script>
+  <script id="vite-legacy-polyfill" src="./assets/polyfills-legacy-C5KOoHoN.js"></script>
+  <script id="vite-legacy-entry" data-src="./assets/index-legacy-BxzV0iwH.js">System.import(document.getElementById('vite-legacy-entry').getAttribute('data-src'))</script>
 </body>
 </html>
