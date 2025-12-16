@@ -361,13 +361,26 @@ const App: React.FC = () => {
   const goBack = () => setViewStack(prev => prev.slice(0, -1));
 
   // ========================================================
-  // 🔥🔥🔥 全局返回键逻辑 (Central Dispatcher) 🔥🔥🔥
+  // 🔥🔥🔥 全局功能注册 (返回键 + 深色模式) 🔥🔥🔥
   // ========================================================
   useEffect(() => {
+    
+    // 1. 注册深色模式切换函数 (供原生 Index.ets 调用)
+    (window as any).setThemeMode = (mode: 'dark' | 'light') => {
+      console.log('Native triggered theme change:', mode);
+      const html = document.documentElement;
+      if (mode === 'dark') {
+        html.classList.add('dark');
+      } else {
+        html.classList.remove('dark');
+      }
+    };
+
+    // 2. 注册全局返回键处理函数 (供原生 Index.ets 调用)
     (window as any).dispatchBackKey = () => {
       console.log('Global Back Triggered. Stack:', viewStack, 'Tab:', activeTab);
 
-      // 1. 关闭任何打开的 Modal
+      // (A) 关闭任何打开的 Modal
       if (isTxModalOpen) {
         setIsTxModalOpen(false);
         setEditingTransaction(null);
@@ -376,19 +389,19 @@ const App: React.FC = () => {
       if (isAccountModalOpen) {
         setIsAccountModalOpen(false);
         setEditingAccount(null);
-        return; // 消费事件
+        return; 
       }
       if (isLedgerListOpen) {
         setIsLedgerListOpen(false);
-        return; // 消费事件
+        return; 
       }
       if (isImportConfirmOpen) {
         setIsImportConfirmOpen(false);
         setPendingImportData(null);
-        return; // 消费事件
+        return; 
       }
 
-      // 2. 检查是否有 ViewStack (二级页面)
+      // (B) 检查是否有 ViewStack (二级页面)
       if (viewStack.length > 0) {
         const top = viewStack[viewStack.length - 1];
 
@@ -399,11 +412,12 @@ const App: React.FC = () => {
           if (typeof window.__LOCAL_BACK_HANDLER__ === 'function') {
              // @ts-ignore
              const result = window.__LOCAL_BACK_HANDLER__();
-             if (result === "handled") return; // Settings 说它处理了（比如切回主视图）
+             // 如果 Settings 内部 view 不是 MAIN，它会切回 MAIN 并返回 "handled"
+             if (result === "handled") return; 
           }
         }
 
-        // 2.2 如果 Settings 没处理，或者不是 Settings，执行路由回退
+        // 2.2 如果没被局部拦截，执行标准路由回退
         setViewStack(prev => prev.slice(0, -1));
         
         // 特殊处理：如果是从 AccountDetail 退出的，清空选中的账户
@@ -411,13 +425,13 @@ const App: React.FC = () => {
         return; // 消费事件
       }
 
-      // 3. 检查 Tab (如果在非 Dashboard Tab，切回 Dashboard)
+      // (C) 检查 Tab (如果在非 Dashboard Tab，切回 Dashboard)
       if (activeTab !== 'dashboard') {
         setActiveTab('dashboard');
-        return; // 消费事件
+        return; 
       }
 
-      // 4. 终极处理：调用原生退出
+      // (D) 终极处理：调用原生退出
       // @ts-ignore
       if (window.JotBillOCR && window.JotBillOCR.exitApp) {
         // @ts-ignore
@@ -427,8 +441,8 @@ const App: React.FC = () => {
 
     // 清理
     return () => {
-      // 可以在这里 delete (window as any).dispatchBackKey; 
-      // 但对于单页应用通常不删也行，只要逻辑稳健
+      // delete (window as any).dispatchBackKey;
+      // delete (window as any).setThemeMode;
     };
   }, [
     isTxModalOpen, 
@@ -638,7 +652,7 @@ const App: React.FC = () => {
   // --- Render ---
   if (isLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-[#F2F2F7]">
+      <div className="min-h-screen flex items-center justify-center bg-[#F2F2F7] dark:bg-black">
         <div className="flex flex-col items-center gap-4">
           <Loader2 size={40} className="text-blue-600 animate-spin" />
           <p className="text-gray-400 font-bold animate-pulse">{t.loading}</p>
@@ -743,7 +757,7 @@ const App: React.FC = () => {
       
       if (currentView === 'ACCOUNTS_PAGE') {
           return (
-              <div className="flex h-screen bg-[#F2F2F7]">
+              <div className="flex h-screen bg-[#F2F2F7] dark:bg-black">
                  <Sidebar 
                     activeTab={activeTab} setActiveTab={setActiveTab} 
                     ledgers={ledgers} currentLedgerId={currentLedgerId} setCurrentLedgerId={setCurrentLedgerId}
@@ -754,8 +768,8 @@ const App: React.FC = () => {
                  <div className="flex-1 flex flex-col min-h-0 md:pl-72">
                     <div className="p-4 overflow-y-auto h-full">
                        <div className="flex items-center gap-4 mb-4 md:hidden">
-                           <button onClick={goBack}><ArrowLeft/></button>
-                           <h1 className="text-xl font-bold">{t.accounts}</h1>
+                           <button onClick={goBack} className="dark:text-white"><ArrowLeft/></button>
+                           <h1 className="text-xl font-bold dark:text-white">{t.accounts}</h1>
                        </div>
                        <AccountsPage 
                            accounts={currentAccounts}
@@ -803,7 +817,7 @@ const App: React.FC = () => {
 
   // --- Main Layout ---
   return (
-    <div className="bg-[#F2F2F7] min-h-screen flex flex-col md:flex-row text-gray-900 font-sans">
+    <div className="bg-[#F2F2F7] dark:bg-black min-h-screen flex flex-col md:flex-row text-gray-900 dark:text-white font-sans transition-colors duration-300">
       <Sidebar 
          activeTab={activeTab} 
          setActiveTab={setActiveTab} 
@@ -935,17 +949,17 @@ const App: React.FC = () => {
       {isImportConfirmOpen && pendingImportData && (
           <div className="fixed inset-0 z-[150] flex items-center justify-center p-4">
               <div className="absolute inset-0 bg-black/50 backdrop-blur-sm"></div>
-              <div className="bg-white rounded-[2rem] p-6 w-full max-w-sm relative z-10 animate-fade-in-up">
-                  <h3 className="text-xl font-bold mb-2">{t.importBackup}</h3>
-                  <p className="text-gray-500 mb-6">{t.importPrompt}</p>
+              <div className="bg-white dark:bg-zinc-900 rounded-[2rem] p-6 w-full max-w-sm relative z-10 animate-fade-in-up">
+                  <h3 className="text-xl font-bold mb-2 dark:text-white">{t.importBackup}</h3>
+                  <p className="text-gray-500 dark:text-gray-400 mb-6">{t.importPrompt}</p>
                   <div className="space-y-3">
-                      <button onClick={() => executeImport(true)} className="w-full py-4 bg-red-50 text-red-600 font-bold rounded-xl border border-red-100">
+                      <button onClick={() => executeImport(true)} className="w-full py-4 bg-red-50 text-red-600 font-bold rounded-xl border border-red-100 dark:bg-red-900/20 dark:border-red-900">
                           {t.overwrite}
                       </button>
-                      <button onClick={() => executeImport(false)} className="w-full py-4 bg-blue-50 text-blue-600 font-bold rounded-xl border border-blue-100">
+                      <button onClick={() => executeImport(false)} className="w-full py-4 bg-blue-50 text-blue-600 font-bold rounded-xl border border-blue-100 dark:bg-blue-900/20 dark:border-blue-900">
                           {t.merge}
                       </button>
-                      <button onClick={() => setIsImportConfirmOpen(false)} className="w-full py-4 bg-gray-100 text-gray-900 font-bold rounded-xl">
+                      <button onClick={() => setIsImportConfirmOpen(false)} className="w-full py-4 bg-gray-100 text-gray-900 font-bold rounded-xl dark:bg-zinc-800 dark:text-gray-300">
                           {t.cancel}
                       </button>
                   </div>

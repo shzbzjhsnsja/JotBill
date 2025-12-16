@@ -1,16 +1,19 @@
 /** @type {import('tailwindcss').Config} */
 export default {
-  // 👇 重点修改这里！
+  // 🔥 核心修改：必须加这一行！
+  // 'class' 模式表示：只有当 html 标签上有 class="dark" 时，才应用深色样式
+  // 这样我们就可以通过鸿蒙原生代码发指令来控制它了
+  darkMode: 'class', 
+
   content: [
     "./index.html",
-    "./*.{js,ts,jsx,tsx}",          // 扫描根目录下的 App.tsx, index.tsx 等
-    "./components/**/*.{js,ts,jsx,tsx}", // 扫描 components 文件夹
-    "./services/**/*.{js,ts,jsx,tsx}",   // 扫描 services 文件夹(如果有用到样式)
+    "./*.{js,ts,jsx,tsx}",          
+    "./components/**/*.{js,ts,jsx,tsx}", 
+    "./services/**/*.{js,ts,jsx,tsx}",   
   ],
   theme: {
     extend: {
-      // 如果你之前在 CDN 脚本里配过自定义颜色（比如 apple gray），
-      // 请务必把那些配置搬到这里！
+      // 保持你原有的扩展配置（如果有）
     },
   },
   plugins: [],

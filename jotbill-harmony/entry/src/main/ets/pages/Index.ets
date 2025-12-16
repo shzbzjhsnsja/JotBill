@@ -7,6 +7,8 @@ import { BusinessError } from '@kit.BasicServicesKit';
 import { http } from '@kit.NetworkKit';
 import { util } from '@kit.ArkTS';
 import { promptAction } from '@kit.ArkUI';
+// 🔥🔥🔥 1. 引入 ConfigurationConstant 以使用 ColorMode 枚举 🔥🔥🔥
+import { ConfigurationConstant } from '@kit.AbilityKit';
 
 // 1. 初始化持久化存储
 PersistentStorage.persistProp('hasAgreedPrivacy', false);
@@ -113,6 +115,10 @@ struct Index {
 
   @StorageLink('hasAgreedPrivacy') hasAgreed: boolean = false;
 
+  // 🔥🔥🔥 2. 监听全局深色模式变量 🔥🔥🔥
+  // 这个变量由 EntryAbility 在 onConfigurationUpdate 中更新
+  @StorageLink('currentColorMode') @Watch('onColorModeChange') currentMode: number = ConfigurationConstant.ColorMode.COLOR_MODE_LIGHT;
+
   dialogController: CustomDialogController = new CustomDialogController({
     builder: PrivacyDialog({
       cancel: () => { this.onPrivacyCancel() },
@@ -129,6 +135,20 @@ struct Index {
       this.dialogController.open();
     } else {
       console.info('用户之前已同意隐私协议，不再弹窗');
+    }
+  }
+
+  // 🔥🔥🔥 3. 当深色模式变化时，通知 Web 🔥🔥🔥
+  onColorModeChange() {
+    const jsCode = this.currentMode === ConfigurationConstant.ColorMode.COLOR_MODE_DARK
+      ? "if(window.setThemeMode) window.setThemeMode('dark')"
+      : "if(window.setThemeMode) window.setThemeMode('light')";
+
+    try {
+      // 只有当 controller 准备好时才发送
+      this.webController.runJavaScript(jsCode);
+    } catch (e) {
+      console.warn('Webview not ready yet for theme update');
     }
   }
 
@@ -196,11 +216,18 @@ struct Index {
         .fileAccess(true)
         .imageAccess(true)
         .onlineImageAccess(true)
+        // 🔥🔥🔥 4. 关键：开启 Webview 自身的深色模式支持 🔥🔥🔥
+        .darkMode(WebDarkMode.Auto)
+        .forceDarkAccess(true)
         .javaScriptProxy({
           object: this.jsBridgeProxy,
           name: "JotBillOCR",
           methodList: ["triggerOCR", "saveFile", "importFile", "davAction", "testConnection", "exitApp"],
           controller: this.webController
+        })
+        // 🔥🔥🔥 5. 页面加载完成后立即同步一次当前状态 🔥🔥🔥
+        .onPageEnd(() => {
+          this.onColorModeChange();
         })
         .onRenderExited((event: IRenderExitedEvent) => {
           console.error('[Webview] 渲染进程崩溃/退出 Reason Code: ' + event.renderExitReason);
