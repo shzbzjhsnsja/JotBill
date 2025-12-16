@@ -79,19 +79,25 @@ const Reports: React.FC<ReportsProps> = ({ transactions, user, categories, curre
   // 3. Trend Data (Daily Breakdown of Current Month)
   const chartData = useMemo(() => {
     const daysInMonth = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0).getDate();
-    const data = [];
-    
+    const totalsByDay = new Map<string, number>();
+
+    monthlyTransactions
+      .filter(t => t.type === viewType)
+      .forEach(t => {
+        // Transactions are stored as ISO strings with time (e.g. 2025-12-14T00:00:00),
+        // so we must normalize to YYYY-MM-DD to aggregate correctly.
+        const dayKey = String(t.date).split('T')[0];
+        totalsByDay.set(dayKey, (totalsByDay.get(dayKey) || 0) + t.amount);
+      });
+
+    const data: { name: string; fullDate: string; amount: number }[] = [];
     for (let i = 1; i <= daysInMonth; i++) {
-        const dateStr = `${currentDate.getFullYear()}-${String(currentDate.getMonth() + 1).padStart(2, '0')}-${String(i).padStart(2, '0')}`;
-        const dayTotal = monthlyTransactions
-            .filter(t => t.date === dateStr && t.type === viewType)
-            .reduce((sum, t) => sum + t.amount, 0);
-        
-        data.push({
-            name: String(i),
-            fullDate: dateStr,
-            amount: dayTotal
-        });
+      const dateStr = `${currentDate.getFullYear()}-${String(currentDate.getMonth() + 1).padStart(2, '0')}-${String(i).padStart(2, '0')}`;
+      data.push({
+        name: String(i),
+        fullDate: dateStr,
+        amount: totalsByDay.get(dateStr) || 0,
+      });
     }
     return data;
   }, [monthlyTransactions, currentDate, viewType]);
