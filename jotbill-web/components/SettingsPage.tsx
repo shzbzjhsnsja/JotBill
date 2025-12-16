@@ -227,7 +227,14 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, user, onUpdateUser,
   };
 
   const handleDavTest = async () => {
-      if (!storageConfig.host || !storageConfig.username) return;
+      if (!storageConfig.host) {
+          showToast('请先填写服务器地址', 'error');
+          return;
+      }
+      if (!storageConfig.username) {
+          showToast('请先填写用户名', 'error');
+          return;
+      }
       setDavLoading('TEST');
       try {
           if ((window as any).AndroidWebDAV || (window as any).JotBillOCR) {

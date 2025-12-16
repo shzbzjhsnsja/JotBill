@@ -51,10 +51,10 @@ struct PrivacyDialog {
           .fontColor('#666666')
           .backgroundColor('#F2F2F2')
           .onClick(() => {
+            this.cancel()
             if (this.controller) {
               this.controller.close()
             }
-            this.cancel()
           })
           .width('40%')
           .height(40)
@@ -81,13 +81,11 @@ struct PrivacyDialog {
   }
 }
 
-
-
-// 🔥🔥🔥 1. 更新 Bridge 接口，增加 importFile 🔥🔥🔥
+// Bridge 接口定义
 interface JotBillBridge {
   triggerOCR: () => void;
   saveFile: (fileName: string, content: string) => void;
-  importFile: () => void; // 新增：原生导入文件
+  importFile: () => void;
   davAction: (action: string, host: string, path: string, user: string, pass: string, body: string, insecure: string, cbId: string) => void;
   testConnection: () => string;
   exitApp: () => void;
@@ -105,8 +103,9 @@ interface IRenderExitedEvent {
 @Entry
 @Component
 struct Index {
-  @State isLocalLoad: boolean = true;
-  @State remoteUrl: string = 'http://10.0.0.103:5173/'; // ⚠️ 请改为你的实际地址
+  @State isLocalLoad: boolean = false;
+  // ⚠️ 记得打包前确认这里是否需要改回 rawfile 或者是远程地址
+  @State remoteUrl: string = 'http://10.0.0.103:5173/';
 
   @State lastExitRequestTime: number = 0;
 
@@ -121,7 +120,8 @@ struct Index {
     }),
     autoCancel: false,
     alignment: DialogAlignment.Center,
-    customStyle: false
+    customStyle: false,
+    cancel: () => { this.onPrivacyCancel() }
   })
 
   aboutToAppear() {
@@ -132,8 +132,17 @@ struct Index {
     }
   }
 
-  // 物理返回键处理
+  // =======================================================
+  // 核心修复：物理返回键处理 (防绕过隐私弹窗)
+  // =======================================================
   onBackPress() {
+    // 1. 如果没同意协议，按返回键直接杀进程
+    if (!this.hasAgreed) {
+      this.onPrivacyCancel();
+      return true;
+    }
+
+    // 2. 正常返回逻辑
     this.webController.runJavaScript('if(window.dispatchBackKey) window.dispatchBackKey();');
     return true;
   }
@@ -163,11 +172,10 @@ struct Index {
     console.info('用户首次同意隐私协议');
   }
 
-  // 🔥🔥🔥 2. 注册方法到 Bridge 🔥🔥🔥
   private jsBridgeProxy: JotBillBridge = {
     triggerOCR: () => { this.realOCRLogic(); },
     saveFile: (f, c) => { this.handleSaveFile(f, c); },
-    importFile: () => { this.handleImportFile(); }, // 新增
+    importFile: () => { this.handleImportFile(); },
     davAction: (action, host, path, user, pass, body, insecure, cbId) => {
       this.handleWebDAV(action, host, path, user, pass, body, cbId);
     },
@@ -190,7 +198,6 @@ struct Index {
         .javaScriptProxy({
           object: this.jsBridgeProxy,
           name: "JotBillOCR",
-          // 🔥 别忘了把 importFile 加进去
           methodList: ["triggerOCR", "saveFile", "importFile", "davAction", "testConnection", "exitApp"],
           controller: this.webController
         })
@@ -205,14 +212,10 @@ struct Index {
     }
   }
 
-  // =======================================================
-  // 🔥🔥🔥 3. 新增：原生文件导入逻辑 (解决导入无效问题) 🔥🔥🔥
-  // =======================================================
   async handleImportFile() {
     try {
       const documentSelectOptions = new picker.DocumentSelectOptions();
       documentSelectOptions.maxSelectNumber = 1;
-      // 允许选择 JSON 或所有文件，避免文件变灰选不了
       documentSelectOptions.fileSuffixFilters = ['.json', '.txt', '*'];
 
       const documentViewPicker = new picker.DocumentViewPicker();
@@ -221,35 +224,31 @@ struct Index {
       if (documentSelectResult && documentSelectResult.length > 0) {
         const uri = documentSelectResult[0];
         const file = fs.openSync(uri, fs.OpenMode.READ_ONLY);
-
-        // 读取文件内容
-        const arrayBuffer = new ArrayBuffer(4096000); // 4MB buffer (根据需要调整)
+        const arrayBuffer = new ArrayBuffer(4096000);
         const readLen = fs.readSync(file.fd, arrayBuffer);
         const content = util.TextDecoder.create('utf-8', { ignoreBOM: true }).decodeWithStream(new Uint8Array(arrayBuffer.slice(0, readLen)));
-
         fs.closeSync(file);
-
-        // 将内容传回 React
-        // 注意：如果文件极大(>5MB)，runJavaScript 可能会失败，但一般备份文件还好
-        // 使用 JSON.stringify 包装 content，防止换行符等破坏 JS 语法
         this.webController.runJavaScript(`if(window.onNativeImportSuccess) window.onNativeImportSuccess(${JSON.stringify(content)});`);
       }
     } catch (err) {
       let e = err as BusinessError;
-      // 告诉 React 失败了
       this.webController.runJavaScript(`alert('导入出错: ${e.message}');`);
     }
   }
 
-  // ... (WebDAV 和 OCR 逻辑保持不变) ...
+  // =======================================================
+  // 🔥🔥🔥 核心修复：WebDAV 逻辑增强 🔥🔥🔥
+  // =======================================================
   async handleWebDAV(action: string, host: string, pathStr: string, user: string, pass: string, body: string, cbId: string) {
-    // ... 代码省略，保持原样 ...
     console.info(`[JotBill-DAV] Action: ${action}, Path: ${pathStr}`);
     try {
       let fullUrl = host;
       if (!fullUrl.endsWith('/')) fullUrl += '/';
+
       if (pathStr) {
         let cleanPath = pathStr.startsWith('/') ? pathStr.substring(1) : pathStr;
+        // 🔥 修复：对路径进行编码，防止中文路径报错
+        cleanPath = encodeURI(cleanPath);
         fullUrl += cleanPath;
       }
 
@@ -288,11 +287,21 @@ struct Index {
 
       const response = await httpRequest.request(fullUrl, options);
 
-      if ((response.responseCode >= 200 && response.responseCode < 300) || (action === 'TEST' && response.responseCode === 405)) {
+      // 🔥🔥🔥 核心修复：允许 403/409/405 通过测试 🔥🔥🔥
+      // 只要不是 401 (密码错)，其他状态码在测试连接时都算成功
+      const isSuccess = (response.responseCode >= 200 && response.responseCode < 300);
+      const isTestAllowed = action === 'TEST' && (
+        response.responseCode === 405 ||
+          response.responseCode === 403 || // 允许 Forbidden (坚果云根目录列表禁止)
+          response.responseCode === 409    // 允许 Conflict
+      );
+
+      if (isSuccess || isTestAllowed) {
         let successMsg = "Success";
         if (action === 'RESTORE') successMsg = typeof response.result === 'string' ? response.result : JSON.stringify(response.result);
         this.replyWebDAV(cbId, true, successMsg);
       } else {
+        // 只有 401 或其他错误才报失败
         this.replyWebDAV(cbId, false, `HTTP Error: ${response.responseCode}`);
       }
     } catch (err) {
@@ -308,9 +317,7 @@ struct Index {
     this.webController.runJavaScript(`if(window.__DAV_CB) window.__DAV_CB('${cbId}', ${JSON.stringify(payload)})`);
   }
 
-  // ... (OCR 逻辑保持不变) ...
   async realOCRLogic() {
-    // ... 代码省略，保持原样 ...
     let file: fs.File | undefined = undefined;
     let imageSource: image.ImageSource | undefined = undefined;
     let pixelMap: image.PixelMap | undefined = undefined;
@@ -364,9 +371,6 @@ struct Index {
     }
   }
 
-  // ==========================================
-  // 功能 C: 导出文件 (已增加提示)
-  // ==========================================
   async handleSaveFile(fileName: string, content: string) {
     try {
       const documentSaveOptions = new picker.DocumentSaveOptions();
@@ -378,7 +382,6 @@ struct Index {
         fs.writeSync(file.fd, content, { encoding: 'utf-8' });
         fs.closeSync(file);
 
-        // 🔥 使用 Toast 提示导出成功，更明显
         promptAction.showToast({
           message: '导出成功！文件已保存',
           duration: 3000
