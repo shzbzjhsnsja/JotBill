@@ -14,17 +14,37 @@ interface DatePickerModalProps {
 
 const DatePickerModal: React.FC<DatePickerModalProps> = ({ isOpen, onClose, currentDate, onDateChange, user }) => {
   const [selectedYear, setSelectedYear] = useState(currentDate.getFullYear());
+  const [selectedMonth, setSelectedMonth] = useState(currentDate.getMonth());
+  const [selectedDay, setSelectedDay] = useState(currentDate.getDate());
   const t = I18N[user.language];
 
   if (!isOpen) return null;
 
   const months = Array.from({ length: 12 }, (_, i) => i);
 
+  const daysInMonth = new Date(selectedYear, selectedMonth + 1, 0).getDate();
+  const days = Array.from({ length: daysInMonth }, (_, i) => i + 1);
+
   const handleMonthSelect = (monthIndex: number) => {
-    const newDate = new Date(selectedYear, monthIndex, 1);
+    setSelectedMonth(monthIndex);
+    // 如果当前选中日超过当月天数，回落到当月最后一天
+    const cappedDay = Math.min(selectedDay, new Date(selectedYear, monthIndex + 1, 0).getDate());
+    setSelectedDay(cappedDay);
+  };
+
+  const handleDaySelect = (day: number) => {
+    const newDate = new Date(selectedYear, selectedMonth, day);
     onDateChange(newDate);
     onClose();
   };
+
+  React.useEffect(() => {
+    if (isOpen) {
+      setSelectedYear(currentDate.getFullYear());
+      setSelectedMonth(currentDate.getMonth());
+      setSelectedDay(currentDate.getDate());
+    }
+  }, [isOpen, currentDate]);
 
   return (
     <div className="fixed inset-0 z-[80] flex items-end md:items-center justify-center">
@@ -51,9 +71,9 @@ const DatePickerModal: React.FC<DatePickerModalProps> = ({ isOpen, onClose, curr
             </div>
 
             {/* Month Grid */}
-            <div className="grid grid-cols-4 gap-4">
+            <div className="grid grid-cols-4 gap-4 mb-8">
                 {months.map(m => {
-                    const isSelected = selectedYear === currentDate.getFullYear() && m === currentDate.getMonth();
+                    const isSelected = m === selectedMonth;
                     return (
                         <button
                             key={m}
@@ -67,6 +87,26 @@ const DatePickerModal: React.FC<DatePickerModalProps> = ({ isOpen, onClose, curr
                             {user.language === 'zh' ? `${m + 1}月` : new Date(2000, m, 1).toLocaleString('en-US', { month: 'short' })}
                         </button>
                     )
+                })}
+            </div>
+
+            {/* Day Grid */}
+            <div className="grid grid-cols-7 gap-3">
+                {days.map(d => {
+                    const isSelected = d === selectedDay;
+                    return (
+                        <button
+                            key={d}
+                            onClick={() => handleDaySelect(d)}
+                            className={`py-3 rounded-xl font-semibold text-sm transition-all active:scale-95 ${
+                                isSelected
+                                ? 'bg-black text-white shadow-lg'
+                                : 'bg-gray-50 text-gray-700 hover:bg-gray-100'
+                            }`}
+                        >
+                            {d}
+                        </button>
+                    );
                 })}
             </div>
             

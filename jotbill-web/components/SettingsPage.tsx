@@ -34,9 +34,7 @@ interface SettingsPageProps {
 }
 
 const PRESET_MODELS: Record<string, string[]> = {
-  GEMINI: ['gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-2.0-flash-exp'],
   DEEPSEEK: ['deepseek-chat', 'deepseek-reasoner'],
-  CUSTOM: ['gpt-4o', 'gpt-4o-mini', 'gpt-3.5-turbo', 'claude-3-5-sonnet']
 };
 
 const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, user, onUpdateUser, onImportData, onBatchAddTransactions, fullData, onAppReset, uiPrefs, onUpdateUiPrefs }) => {
@@ -73,6 +71,7 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, user, onUpdateUser,
 
   const [isResetModalOpen, setIsResetModalOpen] = useState(false);
   const [isResetting, setIsResetting] = useState(false);
+  const [showPrivacy, setShowPrivacy] = useState(false);
 
   useEffect(() => {
     const loadConfig = async () => {
@@ -83,7 +82,15 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, user, onUpdateUser,
             const savedAi = localStorage.getItem('zenledger_ai_config');
             if (savedAi) {
                 const parsed = JSON.parse(savedAi);
-                setAiConfig(parsed);
+                // 强制仅保留 DeepSeek，其他提供商回落到 DeepSeek 默认
+                const provider = 'DEEPSEEK' as AIProvider;
+                const model = parsed.model && PRESET_MODELS.DEEPSEEK.includes(parsed.model) ? parsed.model : 'deepseek-chat';
+                setAiConfig({
+                  provider,
+                  model,
+                  apiKey: parsed.apiKey || '',
+                  baseUrl: 'https://api.deepseek.com',
+                });
                 const providerModels = PRESET_MODELS[parsed.provider] || [];
                 if (parsed.model && !providerModels.includes(parsed.model)) {
                     setIsCustomModel(true);
@@ -153,6 +160,7 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, user, onUpdateUser,
   useEffect(() => {
       (window as any).onNativeImportSuccess = (content: string) => {
           processBackupContent(content);
+          showToast('请返回首页进行覆盖', 'success');
       };
       return () => { delete (window as any).onNativeImportSuccess; };
   }, []);
@@ -176,6 +184,7 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, user, onUpdateUser,
     fileReader.onload = (e) => {
         const resultStr = e.target?.result as string;
         processBackupContent(resultStr);
+        showToast('请返回首页进行覆盖', 'success');
         event.target.value = '';
     };
     fileReader.readAsText(file, "UTF-8");
@@ -262,7 +271,7 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, user, onUpdateUser,
   // ✅ 修复：WebDAV 恢复也不刷新
   const handleDavRestore = async () => {
       setDavLoading('RESTORE');
-      showToast(t.restoring, 'loading');
+      showToast('请返回首页进行覆盖', 'success');
       try {
           let data: any;
           if ((window as any).AndroidWebDAV || (window as any).JotBillOCR) {
@@ -310,11 +319,13 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, user, onUpdateUser,
   };
 
   const handleProviderChange = (provider: AIProvider) => {
-      let defaults = { ...aiConfig, provider };
-      if (provider === 'GEMINI') { defaults.baseUrl = ''; defaults.model = 'gemini-1.5-flash'; } 
-      else if (provider === 'DEEPSEEK') { defaults.baseUrl = 'https://api.deepseek.com'; defaults.model = 'deepseek-chat'; } 
-      else { if (!defaults.baseUrl) defaults.baseUrl = 'https://api.openai.com'; defaults.model = 'gpt-4o'; }
-      setAiConfig(defaults);
+      // 仅允许 DeepSeek
+      setAiConfig({
+        provider: 'DEEPSEEK',
+        apiKey: aiConfig.apiKey,
+        baseUrl: 'https://api.deepseek.com',
+        model: 'deepseek-chat',
+      });
       setIsCustomModel(false);
   };
 
@@ -731,7 +742,17 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, user, onUpdateUser,
                     <button onClick={handleResetClick} className="w-full p-4 flex items-center gap-3 text-red-500 hover:bg-red-50 transition-colors"><Trash2 size={20} /><span className="font-bold">{t.resetData}</span></button>
                 </div>
              </div>
-             <div className="text-center pt-8 pb-4"><p className="text-xs text-gray-400 font-bold">ZenLedger AI v6.2</p></div>
+             <div 
+               className="text-center pt-8 pb-4"
+             >
+               <button
+                 type="button"
+                 onClick={() => setShowPrivacy(true)}
+                 className="text-xs text-gray-400 font-bold hover:text-gray-600"
+               >
+                 小记一笔
+               </button>
+             </div>
           </div>
          </>
       )}
@@ -783,13 +804,12 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, user, onUpdateUser,
                          </label>
                          <div className="relative">
                              <select 
-                                 value={aiConfig.provider}
+                                 value="DEEPSEEK"
+                                 disabled
                                  onChange={(e) => handleProviderChange(e.target.value as AIProvider)}
                                  className="w-full p-3 bg-gray-50 rounded-xl font-bold outline-none appearance-none pr-8"
                              >
-                                 <option value="GEMINI">Google Gemini (Default)</option>
                                  <option value="DEEPSEEK">DeepSeek</option>
-                                 <option value="CUSTOM">OpenAI / Custom</option>
                              </select>
                              <div className="absolute right-3 top-3.5 pointer-events-none text-gray-400">
                                  <ChevronRight size={16} className="rotate-90" />
@@ -819,8 +839,8 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, user, onUpdateUser,
                         </div>
                      </div>
 
-                     {/* Base URL (Hidden for Gemini) */}
-                     {aiConfig.provider !== 'GEMINI' && (
+                     {/* Base URL (DeepSeek only) */}
+                     {aiConfig.provider === 'DEEPSEEK' && (
                          <div className="animate-fade-in-down">
                              <label className="text-xs font-bold text-gray-400 uppercase flex items-center gap-2 mb-2">
                                  <Globe size={14}/> {t.baseUrl}
@@ -831,11 +851,9 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, user, onUpdateUser,
                                 onChange={(e) => setAiConfig({...aiConfig, baseUrl: e.target.value})}
                                 placeholder="https://api.deepseek.com"
                                 className="w-full p-3 bg-gray-50 rounded-xl font-bold outline-none text-sm transition-all focus:bg-white focus:ring-2 focus:ring-black/5"
-                                disabled={aiConfig.provider === 'DEEPSEEK'} 
+                                disabled
                              />
-                             {aiConfig.provider === 'DEEPSEEK' && (
-                                 <p className="text-[10px] text-gray-400 mt-1 ml-1">{t.defaultUrl}</p>
-                             )}
+                             <p className="text-[10px] text-gray-400 mt-1 ml-1">{t.defaultUrl}</p>
                          </div>
                      )}
 
@@ -1123,6 +1141,25 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, user, onUpdateUser,
                   </div>
               </div>
           </div>
+      )}
+
+      {showPrivacy && (
+        <div className="fixed inset-0 z-[110] bg-white flex flex-col">
+          <div className="flex items-center justify-between px-4 py-4 border-b border-gray-200">
+            <h2 className="text-lg font-bold text-gray-900">隐私政策</h2>
+            <button
+              onClick={() => setShowPrivacy(false)}
+              className="px-3 py-1 text-sm font-semibold text-gray-600 bg-gray-100 rounded-full hover:bg-gray-200"
+            >
+              关闭
+            </button>
+          </div>
+          <iframe
+            title="privacy"
+            src="https://wvd4r1fvutb.feishu.cn/wiki/EhTFwM3GCimFp3kynEWcpVudnUi?from=from_copylink"
+            className="w-full flex-1 border-none"
+          />
+        </div>
       )}
     </div>
   );

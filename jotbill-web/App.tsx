@@ -239,6 +239,53 @@ const App: React.FC = () => {
       setUiPrefs(newPrefs);
       persistData(db.STORES.SETTINGS, newPrefs);
   };
+
+  // --- Normalize imported backup for backward compatibility ---
+  const normalizeBackup = (data: any) => {
+      const ledgers = (Array.isArray(data?.ledgers) && data.ledgers.length) ? data.ledgers : INITIAL_LEDGERS;
+      const primaryLedgerId = ledgers[0]?.id || INITIAL_LEDGERS[0].id;
+
+      let accounts = Array.isArray(data?.accounts) ? data.accounts : [];
+      if (!accounts.length) {
+          accounts = [{
+              id: 'acc-default',
+              ledgerId: primaryLedgerId,
+              name: '默认账户',
+              type: 'CHECKING' as AccountType,
+              balance: 0,
+              currency: 'CNY'
+          }];
+      } else {
+          accounts = accounts.map(acc => ({
+              ...acc,
+              ledgerId: acc.ledgerId || primaryLedgerId,
+              currency: acc.currency || 'CNY'
+          }));
+      }
+
+      const categories = (Array.isArray(data?.categories) && data.categories.length) ? data.categories : INITIAL_CATEGORIES;
+      const primaryCategoryId = categories[0]?.id || INITIAL_CATEGORIES[0].id;
+
+      let transactions = Array.isArray(data?.transactions) ? data.transactions : [];
+      transactions = transactions.map((tx, idx) => ({
+          ...tx,
+          id: tx.id || `imp-${Date.now()}-${idx}`,
+          ledgerId: tx.ledgerId || primaryLedgerId,
+          accountId: tx.accountId || accounts[0].id,
+          categoryId: tx.categoryId || primaryCategoryId,
+          currency: tx.currency || 'CNY',
+          original_currency: tx.original_currency || 'CNY',
+          original_amount: tx.original_amount !== undefined ? tx.original_amount : tx.amount,
+          exchange_rate: tx.exchange_rate || 1,
+          mood: tx.mood || 'neutral',
+      }));
+
+      const userProfile = data?.user || INITIAL_USER;
+      const storageConfig = data?.settings || null;
+      const uiPreferences = data?.uiPreferences || DEFAULT_UI_PREFS;
+
+      return { ledgers, accounts, categories, transactions, userProfile, storageConfig, uiPreferences, primaryLedgerId };
+  };
   
   // Import Start
   const handleImportDataRequest = (data: any) => {
@@ -261,30 +308,34 @@ const App: React.FC = () => {
          await db.initDB();
 
          if (shouldOverwrite) {
-             await db.resetDatabase();
-             await db.initDB();
-             
-             if (data.ledgers) await db.saveList(db.STORES.LEDGERS, data.ledgers);
-             if (data.accounts) await db.saveList(db.STORES.ACCOUNTS, data.accounts);
-             if (data.transactions) await db.saveList(db.STORES.TRANSACTIONS, data.transactions);
-             if (data.categories) await db.saveList(db.STORES.CATEGORIES, data.categories);
-             if (data.user) await db.saveValue(db.STORES.USER, 'profile', data.user);
-             if (data.settings) await db.saveValue(db.STORES.SETTINGS, 'storageConfig', data.settings);
+             const normalized = normalizeBackup(data);
+             await db.clearAllStores();
+             await db.saveList(db.STORES.LEDGERS, normalized.ledgers);
+             await db.saveList(db.STORES.ACCOUNTS, normalized.accounts);
+             await db.saveList(db.STORES.TRANSACTIONS, normalized.transactions);
+             await db.saveList(db.STORES.CATEGORIES, normalized.categories);
+             await db.saveValue(db.STORES.USER, 'profile', normalized.userProfile);
+             if (normalized.storageConfig) await db.saveValue(db.STORES.SETTINGS, 'storageConfig', normalized.storageConfig);
+             await db.saveValue(db.STORES.SETTINGS, 'uiPreferences', normalized.uiPreferences);
              localStorage.setItem('zenledger_has_seeded', 'true');
 
-             if (data.ledgers) setLedgers(data.ledgers);
-             if (data.accounts) setAccounts(data.accounts);
-             if (data.transactions) setTransactions(data.transactions);
-             if (data.categories) setCategories(data.categories);
-             if (data.user) setUser(data.user);
-             setUiPrefs(DEFAULT_UI_PREFS);
+             setLedgers(normalized.ledgers);
+             setAccounts(normalized.accounts);
+             setTransactions(normalized.transactions);
+             setCategories(normalized.categories);
+             setUser(normalized.userProfile);
+             setUiPrefs(normalized.uiPreferences);
+             setCurrentLedgerId(normalized.primaryLedgerId);
 
          } else {
-             if (data.ledgers) await db.mergeList(db.STORES.LEDGERS, data.ledgers);
-             if (data.accounts) await db.mergeList(db.STORES.ACCOUNTS, data.accounts);
-             if (data.transactions) await db.mergeList(db.STORES.TRANSACTIONS, data.transactions);
-             if (data.categories) await db.mergeList(db.STORES.CATEGORIES, data.categories);
-             if (data.user) await db.saveValue(db.STORES.USER, 'profile', data.user);
+             const normalized = normalizeBackup(data);
+             await db.mergeList(db.STORES.LEDGERS, normalized.ledgers);
+             await db.mergeList(db.STORES.ACCOUNTS, normalized.accounts);
+             await db.mergeList(db.STORES.TRANSACTIONS, normalized.transactions);
+             await db.mergeList(db.STORES.CATEGORIES, normalized.categories);
+             await db.saveValue(db.STORES.USER, 'profile', normalized.userProfile);
+             if (normalized.storageConfig) await db.saveValue(db.STORES.SETTINGS, 'storageConfig', normalized.storageConfig);
+             await db.saveValue(db.STORES.SETTINGS, 'uiPreferences', normalized.uiPreferences);
 
              const [loadedTxs, loadedCats, loadedAccs, loadedLedgers, loadedUser] = await Promise.all([
                 db.getAll<Transaction>(db.STORES.TRANSACTIONS),
@@ -298,6 +349,7 @@ const App: React.FC = () => {
              setAccounts(loadedAccs || []);
              setLedgers((loadedLedgers && loadedLedgers.length) ? loadedLedgers : INITIAL_LEDGERS);
              if (loadedUser) setUser(loadedUser);
+             setCurrentLedgerId((loadedLedgers && loadedLedgers.length ? loadedLedgers[0].id : normalized.primaryLedgerId));
          }
      } catch (e) {
          console.error("Import failed", e);

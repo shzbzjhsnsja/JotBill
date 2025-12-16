@@ -81,6 +81,8 @@ struct PrivacyDialog {
   }
 }
 
+
+
 // 🔥🔥🔥 1. 更新 Bridge 接口，增加 importFile 🔥🔥🔥
 interface JotBillBridge {
   triggerOCR: () => void;
@@ -103,7 +105,7 @@ interface IRenderExitedEvent {
 @Entry
 @Component
 struct Index {
-  @State isLocalLoad: boolean = false;
+  @State isLocalLoad: boolean = true;
   @State remoteUrl: string = 'http://10.0.0.103:5173/'; // ⚠️ 请改为你的实际地址
 
   @State lastExitRequestTime: number = 0;
@@ -346,7 +348,7 @@ struct Index {
 
       AlertDialog.show({
         title: '识别失败',
-        message: `错误: ${errorMsg}\n(提示: 模拟器无法使用 OCR，请使用真机)`,
+        message: `错误: ${errorMsg}\n(提示: 识别服务暂不可用，请手动记账)`,
         confirm: { value: '关闭', action: () => {} }
       });
 

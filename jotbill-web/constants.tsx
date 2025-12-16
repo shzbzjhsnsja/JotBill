@@ -22,10 +22,10 @@ export const CURRENCY_SYMBOLS: Record<string, string> = {
 };
 
 export const DEFAULT_AI_CONFIG: AIConfig = {
-  provider: 'GEMINI',
+  provider: 'DEEPSEEK',
   apiKey: process.env.API_KEY || '',
-  model: 'gemini-1.5-flash',
-  baseUrl: ''
+  model: 'deepseek-chat',
+  baseUrl: 'https://api.deepseek.com'
 };
 
 // Translations
@@ -170,7 +170,7 @@ export const I18N = {
     overwrite: 'Overwrite Existing Data',
     merge: 'Merge with Existing',
     customizeNav: 'Customize your Bottom Navigation Bar',
-    aiAdvisor: 'AI Financial Coach',
+    aiAdvisor: 'XiaoJi AI Coach',
     monthlyAnalysis: 'Monthly Analysis',
     thinking: 'Thinking...',
     kuruKuru: 'Crunching numbers... Detecting bad financial decisions...',
@@ -387,7 +387,7 @@ export const I18N = {
     overwrite: '覆盖现有数据',
     merge: '合并到现有数据',
     customizeNav: '自定义底部导航栏',
-    aiAdvisor: 'AI 财务顾问',
+    aiAdvisor: '小记一笔 AI 顾问',
     monthlyAnalysis: '月度财务分析',
     thinking: '思考中...',
     kuruKuru: '正在扫描你的钱包... 发现可疑消费...',
@@ -601,7 +601,7 @@ export const I18N = {
     overwrite: 'Écraser',
     merge: 'Fusionner',
     customizeNav: 'Menu Navigation',
-    aiAdvisor: 'Conseiller IA',
+    aiAdvisor: 'Conseiller IA XiaoJi',
     monthlyAnalysis: 'Analyse Mensuelle',
     thinking: 'Réflexion...',
     kuruKuru: 'Analyse de vos dépenses...',

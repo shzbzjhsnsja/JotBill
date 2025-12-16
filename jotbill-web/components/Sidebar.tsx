@@ -31,6 +31,12 @@ const Sidebar: React.FC<SidebarProps> = ({
   const t = I18N[user.language];
 
   const currentLedger = ledgers.find(l => l.id === currentLedgerId) || ledgers[0];
+  const safeLedger = currentLedger || {
+    id: 'placeholder',
+    name: t?.currentBook || 'Ledger',
+    color: 'bg-gray-200',
+    icon: '📒',
+  };
 
   const menuItems = [
     { id: 'dashboard', label: t.dashboard, icon: <LayoutDashboard size={20} /> },
@@ -49,12 +55,12 @@ const Sidebar: React.FC<SidebarProps> = ({
             className="w-full flex items-center justify-between p-3 rounded-2xl bg-gray-50 border border-gray-100 hover:bg-gray-100 hover:border-gray-200 transition-all group"
           >
             <div className="flex items-center gap-3">
-              <div className={`w-10 h-10 rounded-xl ${currentLedger.color} flex items-center justify-center text-xl shadow-sm text-white`}>
-                {currentLedger.icon}
+              <div className={`w-10 h-10 rounded-xl ${safeLedger.color} flex items-center justify-center text-xl shadow-sm text-white`}>
+                {safeLedger.icon}
               </div>
               <div className="text-left">
                 <p className="text-xs text-gray-500 font-medium uppercase tracking-wide">Current Book</p>
-                <p className="text-sm font-bold text-gray-900 group-hover:text-blue-600 transition-colors">{currentLedger.name}</p>
+                <p className="text-sm font-bold text-gray-900 group-hover:text-blue-600 transition-colors">{safeLedger.name}</p>
               </div>
             </div>
             <ChevronDown size={16} className={`text-gray-400 transition-transform ${isLedgerMenuOpen ? 'rotate-180' : ''}`} />

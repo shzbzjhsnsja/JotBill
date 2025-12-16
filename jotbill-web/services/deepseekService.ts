@@ -222,7 +222,7 @@ export const generateFinancialReport = async (
   prompt: string, 
   language: 'en' | 'zh'
 ): Promise<string | null> => {
-  const chineseSystemInstruction = `你是 "Pocket Ledger AI"，一位温暖、共情且专业的财务教练。
+  const chineseSystemInstruction = `你是 "小记一笔 AI"，一位温暖、共情且专业的财务教练。
 **Tone:** 友善、鼓励。强调风险与改进空间。
 **Format:** Markdown + Emoji
 **Content:**
@@ -230,7 +230,7 @@ export const generateFinancialReport = async (
 2. 📊 **账单解剖:** 分析最大支出。
 3. 🛡️ **避坑指南:** 一个可操作的建议。`;
 
-  const englishSystemInstruction = `You are "Pocket Ledger AI", a warm, empathic financial coach.
+  const englishSystemInstruction = `You are "XiaoJi AI", a warm, empathic financial coach.
 **Tone:** Friendly, encouraging, professional.
 **Format:** Markdown + Emoji
 **Content:**

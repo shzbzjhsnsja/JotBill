@@ -268,29 +268,17 @@ export const getBackupData = async () => {
 };
 
 export const resetDatabase = async (): Promise<void> => {
+    // 保持兼容性：不再物理删除数据库，只清空各表，避免旧备份导入时被强制重建
     if (dbInstance) {
         dbInstance.close();
         dbInstance = null;
     }
-
-    const dbName = getDbName();
-    // 删除固定名称的库；若被占用则忽略（下次 init 会重建）
     try {
-        await new Promise<void>((resolve, reject) => {
-            const request = indexedDB.deleteDatabase(dbName);
-            request.onsuccess = () => resolve();
-            request.onerror = () => reject(request.error || new Error("Delete DB failed"));
-            request.onblocked = () => {
-                console.warn("Delete database blocked; will recreate on next init.");
-                resolve();
-            };
-        });
-        console.log("Old database deleted or scheduled for deletion");
+        await clearAllStores();
+        console.log("All stores cleared (resetDatabase).");
     } catch (e) {
-        console.warn("Delete DB failed; will retry on next init", e);
+        console.warn("clearAllStores failed during resetDatabase", e);
     }
-
-    // 新库会在下次 initDB 时创建，保证完全空数据
 };
 
 // Safety helper: clear all stores without dropping the DB (used when delete is blocked)
