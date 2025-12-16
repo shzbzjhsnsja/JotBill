@@ -118,7 +118,7 @@ struct Index {
       cancel: () => { this.onPrivacyCancel() },
       confirm: () => { this.onPrivacyConfirm() }
     }),
-    autoCancel: false,
+    autoCancel: false, // 禁止点击遮罩层关闭
     alignment: DialogAlignment.Center,
     customStyle: false,
     cancel: () => { this.onPrivacyCancel() }
@@ -133,7 +133,7 @@ struct Index {
   }
 
   // =======================================================
-  // 核心修复：物理返回键处理 (防绕过隐私弹窗)
+  // 核心修复：物理返回键处理 (防绕过隐私弹窗 + 配合前端路由)
   // =======================================================
   onBackPress() {
     // 1. 如果没同意协议，按返回键直接杀进程
@@ -142,7 +142,8 @@ struct Index {
       return true;
     }
 
-    // 2. 正常返回逻辑
+    // 2. 正常返回逻辑：调用前端定义的 dispatchBackKey
+    // 前端会根据当前路由决定是“返回上一页”还是“申请退出”
     this.webController.runJavaScript('if(window.dispatchBackKey) window.dispatchBackKey();');
     return true;
   }

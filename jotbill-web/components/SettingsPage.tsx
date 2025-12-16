@@ -6,20 +6,8 @@ import { parseTransactionImage, parseTransactionImageWithGemini, parseTransactio
 import { testWebDAVConnection, uploadToWebDAV, restoreFromWebDAV } from '../services/WebDAVService';
 import * as db from '../services/db';
 
-// ========================================================
-// 🟢 全局返回键逻辑 (原生调用)
-// ========================================================
-(window as any).dispatchBackKey = () => {
-  if (typeof (window as any).__SETTINGS_BACK__ === 'function') {
-    const result = (window as any).__SETTINGS_BACK__();
-    if (result === "handled") return; 
-  }
-  // @ts-ignore
-  if (window.JotBillOCR && window.JotBillOCR.exitApp) {
-    // @ts-ignore
-    window.JotBillOCR.exitApp();
-  }
-};
+// ⚠️ 注意：移除了这里顶部的 window.dispatchBackKey 定义
+// 现在我们将控制权交给 App.tsx 或 index.html 中的全局路由处理，本文件只负责注册局部拦截器
 
 interface SettingsPageProps {
   onBack: () => void;
@@ -108,14 +96,51 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, user, onUpdateUser,
     }
   }, [toast]);
 
+  // =======================================================
+  // 🔥🔥🔥 核心修复：局部拦截逻辑 (Local Interceptor) 🔥🔥🔥
+  // =======================================================
   useEffect(() => {
-    (window as any).__SETTINGS_BACK__ = () => {
-      if (view !== 'MAIN') { setView('MAIN'); return "handled"; }
-      if (onBack) { onBack(); return "handled"; }
-      return "exit";
+    // 注册给 App.tsx 里的全局调度器调用
+    // 这里我们改名为 __LOCAL_BACK_HANDLER__ 以匹配新的全局策略
+    (window as any).__LOCAL_BACK_HANDLER__ = () => {
+      console.log('SettingsPage: Local Back Handler Triggered. Current View:', view);
+
+      // 1. 如果隐私弹窗开着，关闭它，并声明 "handled"（已处理）
+      if (showPrivacy) {
+        setShowPrivacy(false);
+        return "handled";
+      }
+
+      // 2. 如果重置弹窗开着，关闭它
+      if (isResetModalOpen) {
+        setIsResetModalOpen(false);
+        return "handled";
+      }
+
+      // 3. 【解决你的问题】如果当前是子视图（如 Profile, Storage），切回 Settings 主视图
+      if (view !== 'MAIN') { 
+        setView('MAIN'); 
+        return "handled"; // 告诉全局：我处理了，别退 App
+      }
+
+      // 4. 如果已经在 Settings 主视图，执行传入的 onBack (通常是返回 Dashboard)
+      if (onBack) { 
+        onBack(); 
+        return "handled"; // 告诉全局：我处理了（通过 onBack 切路由），别退 App
+      }
+      
+      // 5. 如果实在没得处理，返回 "pass"，让全局逻辑决定（通常会 navigate(-1) 或 exit）
+      return "pass";
     };
-    return () => { delete (window as any).__SETTINGS_BACK__; };
-  }, [view, onBack]);
+
+    // 组件卸载时清理，防止幽灵调用
+    return () => { 
+      // 检查一下是不是自己的函数，防止删了别人的
+      if ((window as any).__LOCAL_BACK_HANDLER__) {
+         delete (window as any).__LOCAL_BACK_HANDLER__; 
+      }
+    };
+  }, [view, onBack, showPrivacy, isResetModalOpen]); // ⚠️ 依赖项非常重要，确保 view 更新时 handler 也是最新的
 
   const saveStorageConfig = async (newConfig: StorageConfig) => {
       setStorageConfig(newConfig);
@@ -126,7 +151,6 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, user, onUpdateUser,
       setToast({ message, type });
   };
 
-  // 🔥🔥🔥 通用导入处理逻辑 (Native & Web) 🔥🔥🔥
   const processBackupContent = async (jsonString: string) => {
       if (!jsonString) {
           alert("Backup content is empty.");
@@ -144,10 +168,7 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, user, onUpdateUser,
               }
           }
 
-          // 核心：写入数据库
           await onImportData(parsed); 
-          
-          // ✅ 关键修改：只弹窗，不刷新，保留你的逻辑流
           alert("导入成功！");
           
       } catch (err) {
@@ -156,7 +177,6 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, user, onUpdateUser,
       }
   };
 
-  // 监听原生导入回调
   useEffect(() => {
       (window as any).onNativeImportSuccess = (content: string) => {
           processBackupContent(content);
@@ -165,14 +185,13 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, user, onUpdateUser,
       return () => { delete (window as any).onNativeImportSuccess; };
   }, []);
 
-  // 🔥🔥🔥 触发导入 (Native 优先, Web 兜底) 🔥🔥🔥
   const triggerImport = () => {
       // @ts-ignore
       if (window.JotBillOCR && window.JotBillOCR.importFile) {
           // @ts-ignore
-          window.JotBillOCR.importFile(); // 鸿蒙原生
+          window.JotBillOCR.importFile(); 
       } else {
-          fileInputRef.current?.click(); // Web 浏览器
+          fileInputRef.current?.click(); 
       }
   };
 
@@ -190,7 +209,6 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, user, onUpdateUser,
     fileReader.readAsText(file, "UTF-8");
   };
 
-  // WebDAV Bridge
   const callNativeDav = (action: 'TEST' | 'BACKUP' | 'RESTORE', body?: string, customFilename?: string) => {
       return new Promise<{ ok: boolean; message: string }>((resolve, reject) => {
           const bridge = (window as any).AndroidWebDAV || (window as any).JotBillOCR;
@@ -275,7 +293,6 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, user, onUpdateUser,
       }
   };
 
-  // ✅ 修复：WebDAV 恢复也不刷新
   const handleDavRestore = async () => {
       setDavLoading('RESTORE');
       showToast('请返回首页进行覆盖', 'success');
@@ -290,7 +307,6 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, user, onUpdateUser,
           if (data) {
               await onImportData(data);
               alert(t.restoreSuccess);
-              // window.location.reload(); // 已移除
           } else {
               throw new Error("Empty response");
           }
@@ -326,7 +342,6 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, user, onUpdateUser,
   };
 
   const handleProviderChange = (provider: AIProvider) => {
-      // 仅允许 DeepSeek
       setAiConfig({
         provider: 'DEEPSEEK',
         apiKey: aiConfig.apiKey,
@@ -336,7 +351,6 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, user, onUpdateUser,
       setIsCustomModel(false);
   };
 
-  // ✅ 修复：导出功能 (Web/Native 双兼容)
   const handleExport = async () => {
     try {
         const backupData = await db.getBackupData();
@@ -346,14 +360,12 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, user, onUpdateUser,
         const dateStr = new Date().toISOString().split('T')[0];
         const fileName = `JotBill_Backup_${dateStr}.json`;
 
-        // 1. 鸿蒙原生
         // @ts-ignore
         if (typeof window.JotBillOCR !== 'undefined' && window.JotBillOCR.saveFile) {
             // @ts-ignore
             window.JotBillOCR.saveFile(fileName, jsonString); 
             return;
         }
-        // 2. Android 原生
         // @ts-ignore
         if (typeof window.Android !== 'undefined' && window.Android.saveFile) {
             // @ts-ignore
@@ -361,7 +373,6 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, user, onUpdateUser,
             return;
         }
 
-        // 3. Web 浏览器 (Fallback)
         const blob = new Blob([jsonString], { type: "application/json" });
         const url = URL.createObjectURL(blob);
         const link = document.createElement('a');
@@ -493,7 +504,6 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, user, onUpdateUser,
       }
   };
   
-  // 🔥🔥🔥 完整找回：CSV (微信/支付宝) 解析逻辑 🔥🔥🔥
   const handleCsvFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !onBatchAddTransactions) return;
@@ -679,7 +689,7 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, user, onUpdateUser,
       }
     };
     reader.readAsText(file, 'UTF-8');
-};
+  };
 
   const Header = ({ title, backFn }: { title: string, backFn: () => void }) => (
     <div className="bg-white/90 backdrop-blur-md px-4 py-3 border-b border-gray-200/50 flex items-center gap-4 sticky top-0 z-10">
@@ -738,7 +748,6 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, user, onUpdateUser,
                    <button onClick={() => setView('STORAGE')} className="w-full p-4 flex items-center justify-between hover:bg-gray-50 transition-colors border-b border-gray-100 group"><div className="flex items-center gap-3"><div className="p-2 bg-blue-50 text-blue-600 rounded-lg group-hover:bg-blue-100 transition-colors"><Server size={20}/></div><span className="font-bold text-gray-700">{t.storage}</span></div><ChevronRight className="text-gray-300 group-hover:text-gray-500 transition-colors" /></button>
                    <button onClick={() => setView('SMART_IMPORT')} className="w-full p-4 flex items-center justify-between hover:bg-gray-50 transition-colors border-b border-gray-100"><div className="flex items-center gap-3"><div className="p-2 bg-green-50 text-green-600 rounded-lg"><ScanLine size={20}/></div><span className="font-bold text-gray-700">{t.smartImport}</span></div><ChevronRight className="text-gray-300" /></button>
                    <button onClick={handleExport} className="w-full p-4 flex items-center justify-between hover:bg-gray-50 transition-colors border-b border-gray-100"><div className="flex items-center gap-3"><div className="p-2 bg-orange-50 text-orange-600 rounded-lg"><Download size={20}/></div><span className="font-bold text-gray-700">{t.export}</span></div></button>
-                   {/* 🔥🔥🔥 修复导入按钮：同时支持原生触发和 Web input 🔥🔥🔥 */}
                    <button onClick={triggerImport} className="w-full p-4 flex items-center justify-between hover:bg-gray-50 transition-colors"><div className="flex items-center gap-3"><div className="p-2 bg-indigo-50 text-indigo-600 rounded-lg"><Upload size={20}/></div><span className="font-bold text-gray-700">{t.import}</span></div>
                    <input type="file" ref={fileInputRef} style={{ display: 'none' }} accept=".json,application/json,*/*" onChange={handleImportFileChange} value={''}/></button>
                 </div>
@@ -798,7 +807,6 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, user, onUpdateUser,
           </div>
       )}
       
-      {/* ... Other views (PROFILE, APPEARANCE, AI_CONFIG, SMART_IMPORT) ... */}
       {view === 'AI_CONFIG' && (
           <div className="flex flex-col h-full bg-[#F2F2F7]">
              <Header title={t.aiConfig} backFn={() => setView('MAIN')} />
@@ -831,7 +839,7 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, user, onUpdateUser,
                          </label>
                         <div className="relative">
                             <input 
-                              type="text" // plain text to allow copy/paste on Huawei keyboard
+                              type="text" 
                               value={aiConfig.apiKey}
                               onChange={(e) => setAiConfig({...aiConfig, apiKey: e.target.value})}
                               placeholder={t.apiKeyPlaceholder}
@@ -871,7 +879,6 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, user, onUpdateUser,
                          </label>
                          
                          <div className="space-y-2">
-                             {/* Primary Select Dropdown */}
                              <div className="relative">
                                  <select
                                      value={isCustomModel ? 'custom' : aiConfig.model}
@@ -895,7 +902,6 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, user, onUpdateUser,
                                  </div>
                              </div>
 
-                             {/* Custom Input Field (Conditional) */}
                              {isCustomModel && (
                                  <input 
                                     type="text"
@@ -910,7 +916,6 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, user, onUpdateUser,
                      </div>
                  </div>
 
-                 {/* Action Buttons - Fixed Layout via Inline Styles */}
                  <div style={{ display: 'flex', gap: '12px', marginTop: '24px', width: '100%' }}>
                      <button 
                          onClick={handleTestConnection}
@@ -1090,13 +1095,13 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, user, onUpdateUser,
                              onClick={() => setImportSource('WECHAT')} 
                              className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all ${importSource === 'WECHAT' ? 'bg-white text-green-600 shadow-sm' : 'text-gray-500'}`}
                           >
-                             WeChat
+                              WeChat
                           </button>
                           <button 
                              onClick={() => setImportSource('ALIPAY')} 
                              className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all ${importSource === 'ALIPAY' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500'}`}
                           >
-                             Alipay
+                              Alipay
                           </button>
                       </div>
 

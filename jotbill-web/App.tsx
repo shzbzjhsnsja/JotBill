@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import Sidebar from './components/Sidebar';
 import MobileHeader from './components/MobileHeader';
@@ -25,7 +24,7 @@ const App: React.FC = () => {
   
   // Modals
   const [isTxModalOpen, setIsTxModalOpen] = useState(false);
-  const [isLedgerListOpen, setIsLedgerListOpen] = useState(false); // FIXED: Added state control
+  const [isLedgerListOpen, setIsLedgerListOpen] = useState(false); 
   const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);
   
   // Account Modals & State
@@ -165,7 +164,6 @@ const App: React.FC = () => {
 
   // --- Reset Application Handler ---
   const handleAppReset = async () => {
-    // 1. Enter Loading State immediately to protect UI from rendering empty/null data
     setIsLoading(true);
     const resetGuard = setTimeout(() => {
       console.warn("Reset guard timeout, forcing UI unlock");
@@ -174,34 +172,26 @@ const App: React.FC = () => {
     
     try {
         console.log("Starting App Reset...");
-        
-        // 2. 强制重建空库并清空所有表（即使删除被阻塞也会清空）
         await db.rebuildEmptyDatabase();
-        // 3. 保持“已初始化”标记，避免下次启动再塞示例数据
         localStorage.setItem('zenledger_has_seeded', 'true');
         
-        // Manual Memory State Reset (Safe Fallback)
         setTransactions([]);
         setAccounts([]);
-        
-        // Reset to Factory Defaults for structure (Ledgers/Categories)
         setLedgers(INITIAL_LEDGERS);
         setCurrentLedgerId(INITIAL_LEDGERS[0].id);
         setCategories(INITIAL_CATEGORIES);
         setUser(INITIAL_USER);
         setUiPrefs(DEFAULT_UI_PREFS);
 
-        // Persist the factory defaults to the new (empty) DB
         await Promise.all([
              db.saveList(db.STORES.LEDGERS, INITIAL_LEDGERS),
              db.saveList(db.STORES.CATEGORIES, INITIAL_CATEGORIES),
              db.saveValue(db.STORES.USER, 'profile', INITIAL_USER),
              db.saveValue(db.STORES.SETTINGS, 'uiPreferences', DEFAULT_UI_PREFS),
-             db.saveList(db.STORES.ACCOUNTS, []), // Empty
-             db.saveList(db.STORES.TRANSACTIONS, []) // Empty
+             db.saveList(db.STORES.ACCOUNTS, []), 
+             db.saveList(db.STORES.TRANSACTIONS, []) 
         ]);
 
-        // 核验清空结果，必要时再清一次
         const [chkTx, chkAcc] = await Promise.all([
           db.getAll(db.STORES.TRANSACTIONS),
           db.getAll(db.STORES.ACCOUNTS)
@@ -301,8 +291,8 @@ const App: React.FC = () => {
 
      setIsLoading(true);
      const importTimer = setTimeout(() => {
-        console.warn("Import timeout fallback triggered");
-        setIsLoading(false);
+       console.warn("Import timeout fallback triggered");
+       setIsLoading(false);
      }, 8000);
      try {
          await db.initDB();
@@ -338,11 +328,11 @@ const App: React.FC = () => {
              await db.saveValue(db.STORES.SETTINGS, 'uiPreferences', normalized.uiPreferences);
 
              const [loadedTxs, loadedCats, loadedAccs, loadedLedgers, loadedUser] = await Promise.all([
-                db.getAll<Transaction>(db.STORES.TRANSACTIONS),
-                db.getAll<Category>(db.STORES.CATEGORIES),
-                db.getAll<Account>(db.STORES.ACCOUNTS),
-                db.getAll<Ledger>(db.STORES.LEDGERS),
-                db.getValue<UserProfile>(db.STORES.USER, 'profile')
+               db.getAll<Transaction>(db.STORES.TRANSACTIONS),
+               db.getAll<Category>(db.STORES.CATEGORIES),
+               db.getAll<Account>(db.STORES.ACCOUNTS),
+               db.getAll<Ledger>(db.STORES.LEDGERS),
+               db.getValue<UserProfile>(db.STORES.USER, 'profile')
              ]);
              setTransactions(loadedTxs || []);
              setCategories((loadedCats && loadedCats.length) ? loadedCats : INITIAL_CATEGORIES);
@@ -370,58 +360,84 @@ const App: React.FC = () => {
   const navigateTo = (view: string) => setViewStack(prev => [...prev, view]);
   const goBack = () => setViewStack(prev => prev.slice(0, -1));
 
-  // Expose back handler to Android WebView so native back knows当前前端状态
+  // ========================================================
+  // 🔥🔥🔥 全局返回键逻辑 (Central Dispatcher) 🔥🔥🔥
+  // ========================================================
   useEffect(() => {
-    (window as any).__ANDROID_BACK__ = () => {
+    (window as any).dispatchBackKey = () => {
+      console.log('Global Back Triggered. Stack:', viewStack, 'Tab:', activeTab);
+
+      // 1. 关闭任何打开的 Modal
       if (isTxModalOpen) {
         setIsTxModalOpen(false);
         setEditingTransaction(null);
-        return "handled";
+        return; // 消费事件
       }
       if (isAccountModalOpen) {
         setIsAccountModalOpen(false);
         setEditingAccount(null);
-        return "handled";
+        return; // 消费事件
       }
       if (isLedgerListOpen) {
         setIsLedgerListOpen(false);
-        return "handled";
+        return; // 消费事件
       }
       if (isImportConfirmOpen) {
         setIsImportConfirmOpen(false);
         setPendingImportData(null);
-        return "handled";
+        return; // 消费事件
       }
 
+      // 2. 检查是否有 ViewStack (二级页面)
       if (viewStack.length > 0) {
         const top = viewStack[viewStack.length - 1];
 
-        // If we're inside Settings, let Settings handle its own inner views first
+        // 2.1 如果是 SETTINGS 页面，先问问 Settings 内部要不要拦截
+        // (SettingsPage.tsx 里通过 __LOCAL_BACK_HANDLER__ 注册)
         if (top === 'SETTINGS') {
-          const settingsBack = (window as any).__SETTINGS_BACK__;
-          if (typeof settingsBack === 'function') {
-            const res = settingsBack();
-            if (res === "handled") return "handled";
+          // @ts-ignore
+          if (typeof window.__LOCAL_BACK_HANDLER__ === 'function') {
+             // @ts-ignore
+             const result = window.__LOCAL_BACK_HANDLER__();
+             if (result === "handled") return; // Settings 说它处理了（比如切回主视图）
           }
         }
 
+        // 2.2 如果 Settings 没处理，或者不是 Settings，执行路由回退
         setViewStack(prev => prev.slice(0, -1));
+        
+        // 特殊处理：如果是从 AccountDetail 退出的，清空选中的账户
         if (top === 'ACCOUNT_DETAIL') setViewingAccount(null);
-        return "handled";
+        return; // 消费事件
       }
 
+      // 3. 检查 Tab (如果在非 Dashboard Tab，切回 Dashboard)
       if (activeTab !== 'dashboard') {
         setActiveTab('dashboard');
-        return "handled";
+        return; // 消费事件
       }
 
-      return "exit";
+      // 4. 终极处理：调用原生退出
+      // @ts-ignore
+      if (window.JotBillOCR && window.JotBillOCR.exitApp) {
+        // @ts-ignore
+        window.JotBillOCR.exitApp();
+      }
     };
 
+    // 清理
     return () => {
-      delete (window as any).__ANDROID_BACK__;
+      // 可以在这里 delete (window as any).dispatchBackKey; 
+      // 但对于单页应用通常不删也行，只要逻辑稳健
     };
-  }, [isTxModalOpen, isAccountModalOpen, isLedgerListOpen, isImportConfirmOpen, viewStack, activeTab]);
+  }, [
+    isTxModalOpen, 
+    isAccountModalOpen, 
+    isLedgerListOpen, 
+    isImportConfirmOpen, 
+    viewStack, 
+    activeTab
+  ]);
 
   // --- Account Handlers ---
   const handleSaveAccount = (data: Partial<Account>) => {
